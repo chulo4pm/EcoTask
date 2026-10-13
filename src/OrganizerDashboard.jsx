@@ -520,6 +520,31 @@ function OrganizerWorkspace({ account, onLogout }) {
 /* ==========================================
    ORGANIZER HOME
    ========================================== */
+// "in 3 days", "Tomorrow", "Today" for an activity date.
+const getStartsIn = (dateValue) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const day = new Date(dateValue);
+  day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day - start) / (24 * 60 * 60 * 1000));
+  if (diff <= 0) return { days: 0, label: 'Today' };
+  if (diff === 1) return { days: 1, label: 'Tomorrow' };
+  return { days: diff, label: `in ${diff} days` };
+};
+
+// "2 hours ago", "Yesterday", "Oct 9"
+const timeAgo = (value) => {
+  const minutes = Math.round((Date.now() - new Date(value)) / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
 function OrganizerHomeView({ goTo }) {
   const [stats, setStats] = useState(null);
   const [activities, setActivities] = useState([]);
@@ -546,77 +571,217 @@ function OrganizerHomeView({ goTo }) {
   }, []);
 
   const upcoming = activities.filter((activity) => getActivityStatus(activity.date) !== 'Completed').slice(0, 5);
+  const attention = stats?.needsAttention || [];
+  const feed = stats?.recentActivity || [];
+  // Bars: how many volunteers joined each of the last 6 activities that have started.
+  const chartActivities = activities.filter((a) => getActivityStatus(a.date) !== 'Upcoming').slice(-6);
+  const chartMax = Math.max(1, ...chartActivities.map((a) => a.participants?.length || 0));
+
+  const attentionRow = (item) => {
+    const when = item.date ? new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+    if (item.type === 'finalize') {
+      return {
+        icon: UserCheck,
+        text: item.title,
+        detail: `ended ${when} · ${item.unmarked > 0 ? `${item.unmarked} volunteer${item.unmarked === 1 ? '' : 's'} not marked` : 'ready to finalize'}`,
+        button: 'Finalize attendance',
+        tab: 'Participation Record',
+        primary: true,
+      };
+    }
+    if (item.type === 'certificates') {
+      return {
+        icon: Award,
+        text: item.title,
+        detail: `${item.count} present volunteer${item.count === 1 ? '' : 's'} without a certificate yet`,
+        button: 'Issue certificates',
+        tab: 'Participation Record',
+        primary: true,
+      };
+    }
+    return {
+      icon: Flag,
+      text: `${item.count} open report${item.count === 1 ? '' : 's'} on ${item.title}`,
+      detail: 'under admin review',
+      button: 'View',
+      tab: 'Reports',
+      primary: false,
+    };
+  };
 
   return (
     <div className="flex flex-col gap-6">
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</div>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="My activities" value={stats?.totalActivities} icon={Calendar} hint={`${stats?.upcomingActivities ?? 0} upcoming`} />
-        <StatTile label="Volunteers joined" value={stats?.totalVolunteersJoined} icon={Users} hint={`${stats?.volunteersAttended ?? 0} attended`} />
-        <StatTile label="Certificates issued" value={stats?.certificatesIssued} icon={Award} />
-        <StatTile label="Open reports" value={stats?.openReports} icon={Flag} hint={stats?.hiddenActivities ? `${stats.hiddenActivities} activity hidden by admin` : 'No hidden activities'} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <section className="eco-card overflow-hidden lg:col-span-2">
-          <CardTitle
-            icon={CalendarClock}
-            right={<button type="button" onClick={() => goTo('Manage Activities')} className="text-xs font-bold text-eco-700 hover:underline">View all →</button>}
-          >
-            Upcoming Activities
-          </CardTitle>
-          <div className="space-y-2.5 p-4">
-            {upcoming.map((activity) => {
-              const day = new Date(activity.date);
+      {stats && (attention.length > 0 ? (
+        <section className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white p-4 sm:px-5">
+          <h3 className="flex items-center gap-2 text-sm font-extrabold text-amber-900">
+            <AlertTriangle className="h-4 w-4" /> Needs your attention
+            <span className="eco-badge eco-badge-amber">{attention.length}</span>
+          </h3>
+          <div className="mt-2 divide-y divide-amber-100">
+            {attention.map((item) => {
+              const row = attentionRow(item);
+              const RowIcon = row.icon;
               return (
-                <div key={activity._id} className="flex items-center gap-3.5 rounded-2xl border border-eco-100 bg-white p-2.5 pr-4">
-                  <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-gradient-to-br from-eco-600 to-eco-700 text-white shadow-md">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-eco-100">{day.toLocaleDateString(undefined, { month: 'short' })}</span>
-                    <span className="text-xl font-extrabold leading-none">{day.getDate()}</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-slate-800">{activity.title}</p>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">{activity.location}</p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span className="eco-badge eco-badge-green">{activity.participants?.length || 0}/{activity.volunteerLimit}</span>
-                    {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
-                  </div>
+                <div key={`${item.type}-${item.activityId}`} className="flex flex-wrap items-center gap-3 py-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                    <RowIcon className="h-4 w-4" />
+                  </span>
+                  <p className="min-w-[180px] flex-1 text-sm font-semibold text-slate-800 [overflow-wrap:anywhere]">
+                    {row.text} <span className="text-xs font-medium text-amber-800/80">· {row.detail}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => goTo(row.tab)}
+                    className={`eco-btn eco-btn-sm ${row.primary ? 'eco-btn-primary' : 'eco-btn-secondary'}`}
+                  >
+                    {row.button}
+                  </button>
                 </div>
               );
             })}
-            {upcoming.length === 0 && (
-              <div className="eco-empty">
-                <Calendar className="h-5 w-5 text-eco-400" />
-                No upcoming activities.
-                <button type="button" onClick={() => goTo('Create Activity')} className="eco-btn eco-btn-primary eco-btn-sm mt-1">Create one</button>
-              </div>
-            )}
           </div>
         </section>
+      ) : (
+        <section className="flex items-center gap-2.5 rounded-2xl border border-eco-200 bg-eco-50/60 px-4 py-3 text-sm font-semibold text-eco-800">
+          <CheckCircle2 className="h-4 w-4" /> You're all caught up. Nothing needs your attention.
+        </section>
+      ))}
 
-        <section className="eco-card overflow-hidden">
-          <CardTitle icon={CheckCircle2}>Quick actions</CardTitle>
-          <div className="space-y-2 p-4">
-            {[
-              { label: 'Create a new activity', tab: 'Create Activity', icon: PlusCircle },
-              { label: 'Mark attendance', tab: 'Participation Record', icon: UserCheck },
-              { label: 'Issue certificates', tab: 'Manage Activities', icon: Award },
-              { label: 'Check reports', tab: 'Reports', icon: Flag },
-            ].map(({ label, tab, icon: Icon }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => goTo(tab)}
-                className="flex w-full items-center gap-3 rounded-xl border border-eco-100 bg-white px-3 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-eco-300 hover:bg-eco-50/60"
-              >
-                <span className="eco-icon-tile-soft h-8 w-8 rounded-lg"><Icon className="h-4 w-4" /></span>
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile label="My activities" value={stats?.totalActivities} icon={Calendar} hint={`${stats?.upcomingActivities ?? 0} upcoming`} />
+        <StatTile
+          label="Volunteers joined"
+          value={stats?.totalVolunteersJoined}
+          icon={Users}
+          hint={stats?.joinedThisWeek > 0 ? `▲ ${stats.joinedThisWeek} this week` : 'No new sign-ups this week'}
+        />
+        <StatTile
+          label="Attendance rate"
+          value={stats?.attendanceRate == null ? '—' : `${stats.attendanceRate}%`}
+          icon={UserCheck}
+          hint={stats?.attendanceRate == null ? 'Shows after you finalize an activity' : `${stats.attendedFinal} of ${stats.decidedFinal} attended`}
+        />
+        <StatTile label="Certificates issued" value={stats?.certificatesIssued} icon={Award} hint={stats?.hiddenActivities ? `${stats.hiddenActivities} activity hidden by admin` : undefined} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="flex flex-col gap-6 lg:col-span-2">
+          <section className="eco-card overflow-hidden">
+            <CardTitle
+              icon={CalendarClock}
+              right={<button type="button" onClick={() => goTo('Manage Activities')} className="text-xs font-bold text-eco-700 hover:underline">View all →</button>}
+            >
+              Upcoming Activities
+            </CardTitle>
+            <div className="space-y-2.5 p-4">
+              {upcoming.map((activity) => {
+                const day = new Date(activity.date);
+                const joined = activity.participants?.length || 0;
+                const limit = activity.volunteerLimit || 1;
+                const fill = Math.min(100, Math.round((joined / limit) * 100));
+                const startsIn = getStartsIn(activity.date);
+                const needsMore = fill < 40 && startsIn.days <= 14;
+                return (
+                  <div key={activity._id} className="flex items-center gap-3.5 rounded-2xl border border-eco-100 bg-white p-2.5 pr-4">
+                    <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-gradient-to-br from-eco-600 to-eco-700 text-white shadow-md">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-eco-100">{day.toLocaleDateString(undefined, { month: 'short' })}</span>
+                      <span className="text-xl font-extrabold leading-none">{day.getDate()}</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-800">{activity.title}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{activity.location} · {startsIn.days === 0 ? 'happening today' : `starts ${startsIn.label}`}</p>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                        <div className={`h-full rounded-full ${needsMore ? 'bg-amber-500' : 'bg-eco-600'}`} style={{ width: `${fill}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <span className={`eco-badge ${needsMore ? 'eco-badge-amber' : 'eco-badge-green'}`}>
+                        {joined} / {activity.volunteerLimit}{needsMore ? ' · needs more' : ''}
+                      </span>
+                      {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              {upcoming.length === 0 && (
+                <div className="eco-empty">
+                  <Calendar className="h-5 w-5 text-eco-400" />
+                  No upcoming activities.
+                  <button type="button" onClick={() => goTo('Create Activity')} className="eco-btn eco-btn-primary eco-btn-sm mt-1">Create one</button>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {chartActivities.length >= 2 && (
+            <section className="eco-card overflow-hidden">
+              <CardTitle icon={Users}>Volunteers per activity</CardTitle>
+              <div className="flex items-end gap-4 px-6 pb-4 pt-5" style={{ height: 190 }}>
+                {chartActivities.map((activity) => {
+                  const count = activity.participants?.length || 0;
+                  return (
+                    <div key={activity._id} className="flex h-full min-w-0 flex-1 flex-col justify-end text-center" title={`${activity.title}: ${count}`}>
+                      <span className="mb-1 text-[11px] font-bold text-eco-800">{count}</span>
+                      <div className="rounded-t-md bg-eco-500 transition-all" style={{ height: `${Math.max(6, (count / chartMax) * 100)}%`, minHeight: 6 }} />
+                      <span className="mt-1.5 truncate text-[10px] font-semibold text-slate-500">{activity.title}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-6">
+          <section className="eco-card overflow-hidden">
+            <CardTitle icon={Activity}>Recent activity</CardTitle>
+            <div className="px-4 py-2">
+              {feed.map((event, index) => {
+                const meta = event.type === 'join'
+                  ? { icon: User, text: <><span className="font-bold">{event.name}</span> joined <span className="font-bold">{event.title}</span></> }
+                  : event.type === 'certificates'
+                    ? { icon: Award, text: <>{event.count} certificate{event.count === 1 ? '' : 's'} issued for <span className="font-bold">{event.title}</span></> }
+                    : { icon: Flag, text: <>New report on <span className="font-bold">{event.title}</span></> };
+                const FeedIcon = meta.icon;
+                return (
+                  <div key={`${event.type}-${event.at}-${index}`} className="flex gap-2.5 border-b border-eco-100/70 py-2.5 text-xs text-slate-700 last:border-b-0">
+                    <span className="eco-icon-tile-soft h-7 w-7 shrink-0 rounded-full"><FeedIcon className="h-3.5 w-3.5" /></span>
+                    <div className="min-w-0">
+                      <p className="leading-snug [overflow-wrap:anywhere]">{meta.text}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400">{timeAgo(event.at)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              {feed.length === 0 && (
+                <p className="py-8 text-center text-xs text-slate-400">Nothing yet. New sign-ups and reports will show here.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="eco-card overflow-hidden">
+            <CardTitle icon={CheckCircle2}>Quick actions</CardTitle>
+            <div className="space-y-2 p-4">
+              {[
+                { label: 'Create a new activity', tab: 'Create Activity', icon: PlusCircle },
+                { label: 'Mark attendance & finalize', tab: 'Participation Record', icon: UserCheck },
+                { label: 'Check reports', tab: 'Reports', icon: Flag },
+              ].map(({ label, tab, icon: Icon }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => goTo(tab)}
+                  className="flex w-full items-center gap-3 rounded-xl border border-eco-100 bg-white px-3 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-eco-300 hover:bg-eco-50/60"
+                >
+                  <span className="eco-icon-tile-soft h-8 w-8 rounded-lg"><Icon className="h-4 w-4" /></span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   );
