@@ -421,25 +421,6 @@ export default function App({ onLogout }) {
           </SidebarItem>
         ))}
       </nav>
-
-      {/* USER CARD */}
-      <div className="mt-auto rounded-2xl border border-white/10 bg-white/[0.06] p-3">
-        <div className="flex items-center gap-3">
-          <div className="eco-avatar h-10 w-10 text-xs">{initials}</div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-white">{displayName}</p>
-            <p className="text-[11px] font-medium text-eco-200/80">Volunteer</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => goTo('settings')}
-            aria-label="Settings"
-            className="rounded-lg p-1.5 text-eco-200 transition hover:bg-white/10 hover:text-white"
-          >
-            <Settings size={16} />
-          </button>
-        </div>
-      </div>
     </div>
   )
 
@@ -1935,28 +1916,22 @@ function CalendarDate({
 
 function Records() {
   const [records, setRecords] = useState([])
-  const [stats, setStats] = useState({ activitiesJoined: 0, completedActivities: 0, certificatesEarned: 0 })
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+  const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     const loadRecords = async () => {
       try {
         const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-        const [recordsResponse, statsResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/participation/my-records`, {
-            headers: { Authorization: `Bearer ${userInfo.token}` },
-          }),
-          fetch(`${API_BASE_URL}/api/dashboard/volunteer-stats`, {
-            headers: { Authorization: `Bearer ${userInfo.token}` },
-          }),
-        ])
+        const recordsResponse = await fetch(`${API_BASE_URL}/api/participation/my-records`, {
+          headers: { Authorization: `Bearer ${userInfo.token}` },
+        })
         const recordsData = await recordsResponse.json()
-        const statsData = await statsResponse.json()
         if (!recordsResponse.ok) throw new Error(recordsData.message || 'Unable to load records')
         setRecords(recordsData)
-        if (statsResponse.ok) setStats(statsData)
       } catch (error) {
-        alert(error.message)
+        setLoadError(error.message)
       } finally {
         setLoading(false)
       }
@@ -1965,8 +1940,13 @@ function Records() {
     loadRecords()
   }, [])
 
-  const completedActivities = records.filter((record) => record.attendance === 'present')
-  const missedActivities = records.filter((record) => record.attendance === 'absent')
+  // Upcoming activities (attendance not marked yet) stay on My Schedule.
+  const history = records
+    .filter((record) => ['present', 'late', 'absent'].includes(record.attendance))
+    .sort((x, y) => new Date(y.date || 0) - new Date(x.date || 0))
+  const attendedCount = history.filter((record) => record.attendance !== 'absent').length
+  const missedCount = history.length - attendedCount
+  const attendanceRate = history.length ? Math.round((attendedCount / history.length) * 100) : 0
 
   const downloadCertificate = (activity) => {
     const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
@@ -2021,158 +2001,133 @@ function Records() {
     certificate.save(`ecotask-certificate-${String(activity.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'participation'}.pdf`)
   }
 
-  const certificates = records.filter((record) => record.certificateIssued)
+  const certificates = history.filter((record) => record.certificateIssued)
+  const visibleRecords = history.filter((record) => {
+    if (filter === 'attended') return record.attendance !== 'absent'
+    if (filter === 'missed') return record.attendance === 'absent'
+    if (filter === 'certificates') return record.certificateIssued
+    return true
+  })
+  const tabs = [
+    { key: 'all', label: 'All', count: history.length },
+    { key: 'attended', label: 'Attended', count: attendedCount },
+    { key: 'missed', label: 'Missed', count: missedCount },
+    { key: 'certificates', label: 'Certificates', count: certificates.length },
+  ]
 
   return (
     <div className="mx-auto max-w-[1280px] p-5 lg:p-8">
-      <PageHeader title="Participation Records" subtitle="Your volunteering history, attendance, and certificates." />
+      <PageHeader title="Participation Record" subtitle="Your volunteering history, attendance, and certificates." />
 
-      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard title="Activities Joined" value={stats.activitiesJoined} icon={<Leaf size={18} />} />
-        <StatCard title="Tasks Completed" value={stats.completedActivities} icon={<CheckCircle size={18} />} />
-        <StatCard title="Certificates Earned" value={stats.certificatesEarned} icon={<Award size={18} />} />
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="eco-card flex items-center gap-4 p-4">
+          <div
+            className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full"
+            style={{ background: `conic-gradient(#2e7d32 ${attendanceRate}%, #e5efe5 0)` }}
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-sm font-extrabold text-eco-800">
+              {attendanceRate}%
+            </span>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-500">Attendance rate</p>
+            <p className="text-sm font-bold text-eco-800">{attendedCount} of {history.length} attended</p>
+          </div>
+        </div>
+        <StatCard title="Activities Joined" value={history.length} icon={<Leaf size={18} />} />
+        <StatCard title="Activities Attended" value={attendedCount} icon={<CheckCircle size={18} />} />
+        <StatCard title="Certificates Earned" value={certificates.length} icon={<Award size={18} />} />
+      </div>
+
+      {loadError && (
+        <div className="eco-empty mb-4 text-red-600">{loadError}</div>
+      )}
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setFilter(tab.key)}
+            className={`rounded-full border px-4 py-1.5 text-[13px] font-semibold transition ${
+              filter === tab.key
+                ? 'border-eco-800 bg-eco-800 text-white'
+                : 'border-eco-100 bg-white text-gray-600 hover:bg-eco-50'
+            }`}
+          >
+            {tab.label} <span className="opacity-70">{tab.count}</span>
+          </button>
+        ))}
       </div>
 
       {loading && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2].map((item) => <div key={item} className="eco-card h-32 animate-pulse bg-white/70" />)}
+        <div className="space-y-3">
+          {[0, 1, 2].map((item) => <div key={item} className="eco-card h-20 animate-pulse bg-white/70" />)}
         </div>
       )}
 
       {!loading && (
-        <div className="space-y-8">
-          {/* COMPLETED */}
-          <section>
-            <SectionHeading icon={<CheckCircle size={15} />} title="Completed Activities" count={completedActivities.length} />
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {completedActivities.map((activity) => (
-                <ParticipationCard
-                  key={activity._id}
-                  activity={{ title: activity.activityTitle, date: activity.date ? new Date(activity.date).toLocaleDateString() : '-', location: activity.location || 'See activity details', time: activity.time || activity.attendance }}
-                  completed={true}
-                />
-              ))}
-            </div>
-            {completedActivities.length === 0 && (
-              <div className="eco-empty">
-                <CheckCircle size={22} className="text-eco-400" />
-                No completed activities yet.
-              </div>
-            )}
-          </section>
-
-          {/* CERTIFICATES */}
-          <section>
-            <SectionHeading icon={<Award size={15} />} title="Certificates" count={certificates.length} />
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {certificates.map((certificate) => (
-                <div
-                  key={certificate._id}
-                  className="eco-card eco-card-hover flex flex-wrap items-center gap-4 p-4"
-                >
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-md shadow-amber-500/30">
-                    <Award size={22} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-gray-800">{certificate.activityTitle}</p>
-                    <p className="mt-0.5 text-xs text-gray-500">
-                      {certificate.date ? new Date(certificate.date).toLocaleDateString() : '-'}
-                      {' '}• ID: <span className="font-mono">{certificate.certificateId || 'N/A'}</span>
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => downloadCertificate({
-                      id: certificate._id,
-                      certificateId: certificate.certificateId,
-                      title: certificate.activityTitle,
-                      date: certificate.date ? new Date(certificate.date).toLocaleDateString() : '-',
-                      location: certificate.location || 'See activity details',
-                    })}
-                    className="eco-btn eco-btn-primary eco-btn-sm"
-                  >
-                    <Download size={14} /> PDF
-                  </button>
+        <div className="eco-card overflow-hidden">
+          {visibleRecords.map((record) => {
+            const missed = record.attendance === 'absent'
+            const late = record.attendance === 'late'
+            return (
+              <div
+                key={record._id}
+                className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-eco-100/60 px-4 py-3.5 last:border-b-0 sm:px-5"
+              >
+                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${missed ? 'bg-gray-100 text-gray-400' : 'bg-eco-50 text-eco-600'}`}>
+                  <TreePine size={18} />
+                </span>
+                <div className="min-w-[180px] flex-1">
+                  <p className={`truncate text-sm font-bold ${missed ? 'text-gray-500' : 'text-gray-800'}`}>{record.activityTitle}</p>
+                  <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-gray-500">
+                    <MapPin size={12} className="shrink-0" /> {record.location || 'See activity details'}
+                  </p>
                 </div>
-              ))}
-            </div>
-            {certificates.length === 0 && (
-              <div className="eco-empty">
-                <Award size={22} className="text-eco-400" />
-                No certificates issued yet. Attend an activity to earn one.
+                <p className="flex items-center gap-1.5 text-xs text-gray-600 sm:w-[130px]">
+                  <Calendar size={12} className="shrink-0 text-eco-600" />
+                  {record.date ? new Date(record.date).toLocaleDateString() : '-'}
+                </p>
+                <div className="sm:w-[120px]">
+                  {missed
+                    ? <span className="eco-badge bg-gray-100 text-gray-500">Did not attend</span>
+                    : <span className="eco-badge eco-badge-green"><CheckCircle size={11} /> {late ? 'Late' : 'Present'}</span>}
+                </div>
+                <div className="flex justify-end sm:w-[150px]">
+                  {record.certificateIssued ? (
+                    <button
+                      type="button"
+                      onClick={() => downloadCertificate({
+                        id: record._id,
+                        certificateId: record.certificateId,
+                        title: record.activityTitle,
+                        date: record.date ? new Date(record.date).toLocaleDateString() : '-',
+                        location: record.location || 'See activity details',
+                      })}
+                      className="eco-btn eco-btn-primary eco-btn-sm"
+                    >
+                      <Download size={13} /> Certificate
+                    </button>
+                  ) : missed ? (
+                    <span className="text-xs text-gray-400">No certificate</span>
+                  ) : (
+                    <span className="text-xs text-gray-500">Certificate pending</span>
+                  )}
+                </div>
               </div>
-            )}
-          </section>
-
-          {/* MISSED */}
-          <section>
-            <SectionHeading icon={<XCircle size={15} />} title="Missed Activities" count={missedActivities.length} tone="red" />
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {missedActivities.map((activity) => (
-                <ParticipationCard
-                  key={activity._id}
-                  activity={{ title: activity.activityTitle, date: activity.date ? new Date(activity.date).toLocaleDateString() : '-', location: activity.location || 'See activity details', time: activity.time || activity.attendance }}
-                  completed={false}
-                />
-              ))}
+            )
+          })}
+          {visibleRecords.length === 0 && (
+            <div className="eco-empty border-0">
+              <Sparkles size={22} className="text-eco-400" />
+              {filter === 'certificates'
+                ? 'No certificates issued yet. Attend an activity to earn one.'
+                : filter === 'missed'
+                  ? 'No missed activities. Great job!'
+                  : 'No records here yet.'}
             </div>
-            {missedActivities.length === 0 && (
-              <div className="eco-empty">
-                <Sparkles size={22} className="text-eco-400" />
-                No missed activities. Great job!
-              </div>
-            )}
-          </section>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SectionHeading({ icon, title, count, tone = 'green' }) {
-  return (
-    <div className="mb-3 flex items-center gap-2.5">
-      <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${
-        tone === 'red' ? 'border border-red-200 bg-red-50 text-red-600' : 'eco-icon-tile h-7 w-7 rounded-lg'
-      }`}>
-        {icon}
-      </span>
-      <h2 className="text-base font-extrabold text-eco-800">{title}</h2>
-      {typeof count === 'number' && (
-        <span className={`eco-badge ${tone === 'red' ? 'eco-badge-red' : 'eco-badge-green'}`}>{count}</span>
-      )}
-    </div>
-  )
-}
-
-function ParticipationCard({ activity, completed, onDownload }) {
-  return (
-    <div className={`eco-card eco-card-hover overflow-hidden p-4 ${completed ? '' : 'border-red-100'}`}>
-      <span className={`absolute inset-y-0 left-0 w-1 ${completed ? 'bg-gradient-to-b from-eco-400 to-eco-700' : 'bg-gradient-to-b from-red-300 to-red-500'}`} />
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className={completed ? 'eco-icon-tile-soft h-8 w-8 rounded-lg' : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-500'}>
-            <TreePine size={14} />
-          </span>
-          <h3 className="truncate text-sm font-bold text-gray-800">{activity.title}</h3>
-        </div>
-
-        {completed
-          ? <span className="eco-badge eco-badge-green"><CheckCircle size={11} /> Present</span>
-          : <span className="eco-badge eco-badge-red"><XCircle size={11} /> Absent</span>}
-      </div>
-
-      <div className="space-y-1.5 text-xs text-gray-600">
-        <p className="flex items-center gap-2"><MapPin size={12} className="shrink-0 text-eco-600" /> <span className="truncate">{activity.location}</span></p>
-        <p className="flex items-center gap-2"><Calendar size={12} className="shrink-0 text-eco-600" /> {activity.date}</p>
-        <p className="flex items-center gap-2"><Clock size={12} className="shrink-0 text-eco-600" /> {activity.time}</p>
-      </div>
-
-      {completed && onDownload && (
-        <div className="mt-3 flex justify-end">
-          <button onClick={onDownload} className="eco-btn eco-btn-primary eco-btn-sm">
-            <Download size={13} /> Certificate
-          </button>
+          )}
         </div>
       )}
     </div>

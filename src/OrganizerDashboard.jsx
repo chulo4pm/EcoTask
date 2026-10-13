@@ -434,19 +434,6 @@ function OrganizerWorkspace({ account, onLogout }) {
               );
             })}
           </nav>
-
-          <div className="mt-auto rounded-2xl border border-white/10 bg-white/[0.06] p-3">
-            <div className="flex items-center gap-3">
-              <div className="eco-avatar h-10 w-10 text-xs">{getInitials(displayName)}</div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-white">{displayName}</p>
-                <p className="truncate text-[11px] font-medium text-eco-200/80">Verified organizer</p>
-              </div>
-              <button type="button" onClick={onLogout} aria-label="Log out" className="rounded-lg p-1.5 text-eco-200 transition hover:bg-white/10 hover:text-white">
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
         </div>
       </aside>
 
