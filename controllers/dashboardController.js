@@ -57,28 +57,103 @@ exports.getVolunteerStats = async (req, res) => {
   }
 };
 
-// Summary for the logged-in organizer (their own activities only).
+// Summary for the logged-in organizer (their own activities only): totals, things that need
+// the organizer's attention, and a short feed of recent events.
 exports.getOrganizerStats = async (req, res) => {
   try {
-    const activities = await Activity.find({ organizer: req.user._id }).select('_id date participants isHidden title');
+    const activities = await Activity.find({ organizer: req.user._id })
+      .select('_id date participants isHidden title attendanceFinalized');
     const activityIds = activities.map((a) => a._id);
+    const titleById = new Map(activities.map((a) => [String(a._id), a.title]));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const [certificatesIssued, presentCount, openReports] = await Promise.all([
-      Participation.countDocuments({ activity: { $in: activityIds }, certificateIssued: true }),
-      Participation.countDocuments({ activity: { $in: activityIds }, attendance: 'present' }),
-      Report.countDocuments({ activity: { $in: activityIds }, status: 'open' }),
+    const [records, openReportList, recentJoins, recentReports] = await Promise.all([
+      Participation.find({ activity: { $in: activityIds } }).select('activity attendance certificateIssued certificateIssuedAt joinedAt'),
+      Report.find({ activity: { $in: activityIds }, status: 'open' }).select('activity createdAt'),
+      Participation.find({ activity: { $in: activityIds } }).sort({ joinedAt: -1 }).limit(6).populate('user', 'name').select('activity user joinedAt'),
+      Report.find({ activity: { $in: activityIds } }).sort({ createdAt: -1 }).limit(4).select('activity createdAt'),
     ]);
+
+    const byActivity = new Map();
+    records.forEach((record) => {
+      const key = String(record.activity);
+      if (!byActivity.has(key)) byActivity.set(key, []);
+      byActivity.get(key).push(record);
+    });
+
+    // Attendance rate only counts activities whose attendance has been finalized.
+    const finalizedIds = new Set(activities.filter((a) => a.attendanceFinalized).map((a) => String(a._id)));
+    let presentFinal = 0;
+    let decidedFinal = 0;
+    records.forEach((record) => {
+      if (!finalizedIds.has(String(record.activity))) return;
+      if (record.attendance === 'present') { presentFinal += 1; decidedFinal += 1; }
+      if (record.attendance === 'absent') decidedFinal += 1;
+    });
+
+    // "Needs your attention": finalize attendance, issue certificates, open reports.
+    const needsAttention = [];
+    activities.forEach((activity) => {
+      const list = byActivity.get(String(activity._id)) || [];
+      if (list.length === 0 || new Date(activity.date) >= endOfToday) return;
+      if (!activity.attendanceFinalized) {
+        needsAttention.push({
+          type: 'finalize',
+          activityId: activity._id,
+          title: activity.title,
+          date: activity.date,
+          unmarked: list.filter((r) => !r.attendance).length,
+          total: list.length,
+        });
+      } else {
+        const waiting = list.filter((r) => r.attendance === 'present' && !r.certificateIssued).length;
+        if (waiting > 0) {
+          needsAttention.push({ type: 'certificates', activityId: activity._id, title: activity.title, date: activity.date, count: waiting });
+        }
+      }
+    });
+    const reportsByActivity = new Map();
+    openReportList.forEach((report) => {
+      const key = String(report.activity);
+      reportsByActivity.set(key, (reportsByActivity.get(key) || 0) + 1);
+    });
+    reportsByActivity.forEach((count, key) => {
+      needsAttention.push({ type: 'report', activityId: key, title: titleById.get(key) || 'Activity', count });
+    });
+
+    // Recent events: volunteers joining, certificates issued (per activity and day), new reports.
+    const feed = [];
+    recentJoins.forEach((record) => feed.push({
+      type: 'join', at: record.joinedAt, name: record.user?.name || 'A volunteer', title: titleById.get(String(record.activity)),
+    }));
+    const certGroups = new Map();
+    records.filter((r) => r.certificateIssued && r.certificateIssuedAt).forEach((record) => {
+      const key = `${record.activity}-${new Date(record.certificateIssuedAt).toDateString()}`;
+      const group = certGroups.get(key) || { type: 'certificates', at: record.certificateIssuedAt, count: 0, title: titleById.get(String(record.activity)) };
+      group.count += 1;
+      certGroups.set(key, group);
+    });
+    certGroups.forEach((group) => feed.push(group));
+    recentReports.forEach((report) => feed.push({ type: 'report', at: report.createdAt, title: titleById.get(String(report.activity)) }));
+    feed.sort((x, y) => new Date(y.at) - new Date(x.at));
 
     res.json({
       totalActivities: activities.length,
       upcomingActivities: activities.filter((a) => new Date(a.date) >= today).length,
       totalVolunteersJoined: activities.reduce((sum, a) => sum + (a.participants?.length || 0), 0),
-      volunteersAttended: presentCount,
-      certificatesIssued,
-      openReports,
+      volunteersAttended: records.filter((r) => r.attendance === 'present').length,
+      joinedThisWeek: records.filter((r) => r.joinedAt && new Date(r.joinedAt) >= weekAgo).length,
+      attendanceRate: decidedFinal > 0 ? Math.round((presentFinal / decidedFinal) * 100) : null,
+      attendedFinal: presentFinal,
+      decidedFinal,
+      certificatesIssued: records.filter((r) => r.certificateIssued).length,
+      openReports: openReportList.length,
       hiddenActivities: activities.filter((a) => a.isHidden).length,
+      needsAttention,
+      recentActivity: feed.slice(0, 6),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
