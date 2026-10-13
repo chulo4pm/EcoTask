@@ -4,7 +4,7 @@ const {
   getMyRecords,
   getActivityParticipation,
   updateAttendance,
-  issueActivityCertificates,
+  finalizeActivityAttendance,
 } = require('../controllers/participationController');
 const { protect, organizerOnly } = require('../middleware/authMiddleware');
 
@@ -15,6 +15,6 @@ const router = express.Router();
 router.get('/my-records', protect, getMyRecords);
 router.get('/activity/:activityId', protect, getActivityParticipation);
 router.patch('/:id/attendance', protect, organizerOnly, updateAttendance);
-router.post('/activity/:activityId/certificates', protect, organizerOnly, issueActivityCertificates);
+router.post('/activity/:activityId/finalize', protect, organizerOnly, finalizeActivityAttendance);
 
 module.exports = router;

@@ -281,7 +281,7 @@ exports.getOrganizerDetails = async (req, res) => {
 
     const activityIds = activities.map((a) => a._id);
     const [attended, certificates] = await Promise.all([
-      Participation.countDocuments({ activity: { $in: activityIds }, attendance: { $in: ['present', 'late'] } }),
+      Participation.countDocuments({ activity: { $in: activityIds }, attendance: 'present' }),
       Participation.countDocuments({ activity: { $in: activityIds }, certificateIssued: true }),
     ]);
 

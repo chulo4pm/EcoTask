@@ -18,7 +18,7 @@ const participationSchema = new mongoose.Schema({
   },
   attendance: {
     type: String,
-    enum: ['present', 'absent', 'late'],
+    enum: ['present', 'absent'],
     default: null,
   },
   certificateIssued: {

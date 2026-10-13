@@ -14,6 +14,10 @@ const activitySchema = new mongoose.Schema({
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   status: { type: String, enum: ['upcoming', 'ongoing', 'completed'], default: 'upcoming' },
 
+  // Attendance is a draft until the organizer finalizes it. Volunteers see "Pending" before that.
+  attendanceFinalized: { type: Boolean, default: false },
+  attendanceFinalizedAt: { type: Date, default: null },
+
   // The organizer who owns (created) this activity.
   // Older activities created by the admin have no organizer until the admin assigns one.
   organizer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

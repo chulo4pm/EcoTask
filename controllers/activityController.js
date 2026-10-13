@@ -197,7 +197,6 @@ exports.getActivities = async (req, res) => {
             _id: '$activity',
             total: { $sum: 1 },
             present: { $sum: { $cond: [{ $eq: ['$attendance', 'present'] }, 1, 0] } },
-            late: { $sum: { $cond: [{ $eq: ['$attendance', 'late'] }, 1, 0] } },
             absent: { $sum: { $cond: [{ $eq: ['$attendance', 'absent'] }, 1, 0] } },
           },
         },
@@ -205,12 +204,11 @@ exports.getActivities = async (req, res) => {
       attendanceCounts = new Map(counts.map((item) => [String(item._id), {
         total: item.total,
         present: item.present,
-        late: item.late,
         absent: item.absent,
-        unmarked: item.total - item.present - item.late - item.absent,
+        unmarked: item.total - item.present - item.absent,
       }]));
     }
-    const emptyAttendance = { total: 0, present: 0, late: 0, absent: 0, unmarked: 0 };
+    const emptyAttendance = { total: 0, present: 0, absent: 0, unmarked: 0 };
 
     res.status(200).json(activities.map((activity) => ({
       ...formatActivity(activity),

@@ -13,18 +13,8 @@ const canManageActivity = (user, activity) => (
 exports.getMyRecords = async (req, res) => {
   try {
     const records = await Participation.find({ user: req.user._id })
-      .populate('activity', 'title date location time')
+      .populate('activity', 'title date location time attendanceFinalized')
       .sort({ joinedAt: -1 });
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    await Promise.all(records.map(async (record) => {
-      const activityDate = record.activity?.date ? new Date(record.activity.date) : null;
-      if (record.attendance === null && activityDate && activityDate < today) {
-        record.attendance = 'absent';
-        await record.save();
-      }
-    }));
 
     res.json(records.map((record) => ({
       _id: record._id,
@@ -33,7 +23,9 @@ exports.getMyRecords = async (req, res) => {
       date: record.activity?.date,
       location: record.activity?.location,
       time: record.activity?.time,
-      attendance: record.attendance,
+      // Attendance stays hidden ("Pending") until the organizer finalizes it.
+      finalized: Boolean(record.activity?.attendanceFinalized),
+      attendance: record.activity?.attendanceFinalized ? record.attendance : null,
       certificateIssued: record.certificateIssued,
       certificateIssuedAt: record.certificateIssuedAt,
       certificateId: record.certificateId,
@@ -44,37 +36,80 @@ exports.getMyRecords = async (req, res) => {
   }
 };
 
-// Issue certificates to volunteers marked present for a completed activity (owner organizer only).
-exports.issueActivityCertificates = async (req, res) => {
+// Gives a certificate to every present volunteer who doesn't have one yet. Returns how many were new.
+const issueCertificatesFor = async (activityId) => {
+  const eligibleRecords = await Participation.find({
+    activity: activityId,
+    attendance: 'present',
+    certificateIssued: { $ne: true },
+  });
+  const issuedAt = new Date();
+  await Promise.all(eligibleRecords.map((record) => {
+    record.certificateIssued = true;
+    record.certificateIssuedAt = issuedAt;
+    record.certificateId = `CERT-${record._id.toString().slice(-8).toUpperCase()}`;
+    return record.save();
+  }));
+  return eligibleRecords;
+};
+
+// Finalize attendance (owner organizer only): everyone still unmarked becomes absent, the
+// attendance becomes visible to volunteers, and present volunteers get their certificates.
+// Safe to run again after editing marks - only newly present volunteers get a new certificate.
+exports.finalizeActivityAttendance = async (req, res) => {
   try {
-    const activity = await Activity.findById(req.params.activityId).select('title date organizer');
+    const activity = await Activity.findById(req.params.activityId).select('title date organizer attendanceFinalized');
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
     if (!canManageActivity(req.user, activity)) {
-      return res.status(403).json({ message: 'You can only issue certificates for your own activities' });
+      return res.status(403).json({ message: 'You can only finalize attendance for your own activities' });
     }
 
-    const eligibleRecords = await Participation.find({
-      activity: activity._id,
-      attendance: 'present',
-    });
-    if (eligibleRecords.length === 0) {
-      return res.status(400).json({ message: 'Mark at least one volunteer as present before issuing certificates.' });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (new Date(activity.date) >= new Date(today.getTime() + 24 * 60 * 60 * 1000)) {
+      return res.status(400).json({ message: "This activity hasn't happened yet. Finalize attendance on or after the day." });
     }
 
-    const issuedAt = new Date();
-    const updates = eligibleRecords.map((record) => {
-      if (record.certificateIssued && record.certificateId) return record.save();
-      record.certificateIssued = true;
-      record.certificateIssuedAt = issuedAt;
-      record.certificateId = `CERT-${record._id.toString().slice(-8).toUpperCase()}`;
-      return record.save();
-    });
-    await Promise.all(updates);
+    const wasFinalized = activity.attendanceFinalized;
+    const unmarked = await Participation.updateMany(
+      { activity: activity._id, attendance: null },
+      { $set: { attendance: 'absent' } }
+    );
+
+    const newlyIssued = await issueCertificatesFor(activity._id);
+    const [presentCount, absentCount] = await Promise.all([
+      Participation.countDocuments({ activity: activity._id, attendance: 'present' }),
+      Participation.countDocuments({ activity: activity._id, attendance: 'absent' }),
+    ]);
+
+    activity.attendanceFinalized = true;
+    activity.attendanceFinalizedAt = new Date();
+    await activity.save();
+
+    // Tell volunteers: everyone the first time, afterwards only those who just got a certificate.
+    const everyone = await Participation.find({ activity: activity._id }).select('user attendance');
+    if (!wasFinalized) {
+      notifyUsers(everyone.map((r) => r.user), {
+        type: 'attendance_marked',
+        title: 'Attendance finalized',
+        message: `Your attendance for ${activity.title} is now final. Check your participation record.`,
+        activity: activity._id,
+      });
+    } else if (newlyIssued.length > 0) {
+      notifyUsers(newlyIssued.map((r) => r.user), {
+        type: 'attendance_marked',
+        title: 'Certificate issued',
+        message: `Your certificate for ${activity.title} is ready.`,
+        activity: activity._id,
+      });
+    }
 
     res.json({
-      message: `Certificates issued to ${eligibleRecords.length} present volunteer(s).`,
-      issuedCount: eligibleRecords.length,
-      activity: { _id: activity._id, title: activity.title, date: activity.date },
+      message: `Attendance finalized. ${newlyIssued.length} new certificate(s) issued.`,
+      presentCount,
+      absentCount,
+      markedAbsent: unmarked.modifiedCount ?? unmarked.nModified ?? 0,
+      issuedCount: newlyIssued.length,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -105,15 +140,15 @@ exports.getActivityParticipation = async (req, res) => {
   }
 };
 
-// Mark attendance as present, absent, or late (owner organizer only).
+// Mark attendance as present or absent (owner organizer only).
 exports.updateAttendance = async (req, res) => {
   try {
     const attendance = String(req.body.attendance || '');
-    if (!['present', 'absent', 'late'].includes(attendance)) {
+    if (!['present', 'absent'].includes(attendance)) {
       return res.status(400).json({ message: 'Invalid attendance value' });
     }
 
-    const record = await Participation.findById(req.params.id).populate('activity', 'title date organizer');
+    const record = await Participation.findById(req.params.id).populate('activity', 'title date organizer attendanceFinalized');
     if (!record) return res.status(404).json({ message: 'Participation record not found' });
     if (!record.activity || !canManageActivity(req.user, record.activity)) {
       return res.status(403).json({ message: 'You can only update attendance for your own activities' });
@@ -121,12 +156,15 @@ exports.updateAttendance = async (req, res) => {
 
     record.attendance = attendance;
     await record.save();
-    notifyUsers([record.user], {
-      type: 'attendance_marked',
-      title: 'Attendance marked',
-      message: `You were marked ${attendance} for ${record.activity.title}.`,
-      activity: record.activity._id,
-    });
+    // While attendance is a draft volunteers see "Pending", so only notify after it is finalized.
+    if (record.activity.attendanceFinalized) {
+      notifyUsers([record.user], {
+        type: 'attendance_marked',
+        title: 'Attendance updated',
+        message: `You were marked ${attendance} for ${record.activity.title}.`,
+        activity: record.activity._id,
+      });
+    }
     await record.populate('user', 'name email phone');
     res.json(record);
   } catch (error) {

@@ -44,10 +44,11 @@ exports.getAdminStats = async (req, res) => {
 // Build the current volunteer's personal dashboard summary from their records.
 exports.getVolunteerStats = async (req, res) => {
   try {
-    const records = await Participation.find({ user: req.user._id }).populate('activity', 'status');
+    const records = await Participation.find({ user: req.user._id }).populate('activity', 'attendanceFinalized');
     res.json({
       activitiesJoined: records.length,
-      completedActivities: records.filter((record) => record.attendance === 'present').length,
+      // Only count attendance the organizer has finalized (until then volunteers see "Pending").
+      completedActivities: records.filter((record) => record.activity?.attendanceFinalized && record.attendance === 'present').length,
       totalHours: 0,
       certificatesEarned: records.filter((record) => record.certificateIssued).length,
     });
@@ -66,7 +67,7 @@ exports.getOrganizerStats = async (req, res) => {
 
     const [certificatesIssued, presentCount, openReports] = await Promise.all([
       Participation.countDocuments({ activity: { $in: activityIds }, certificateIssued: true }),
-      Participation.countDocuments({ activity: { $in: activityIds }, attendance: { $in: ['present', 'late'] } }),
+      Participation.countDocuments({ activity: { $in: activityIds }, attendance: 'present' }),
       Report.countDocuments({ activity: { $in: activityIds }, status: 'open' }),
     ]);
 
@@ -149,7 +150,7 @@ exports.getAdminActivityFeed = async (req, res) => {
   }
 };
 
-// Rank volunteers by how many activities they actually attended (present or late).
+// Rank volunteers by how many activities they actually attended (marked present).
 exports.getTopVolunteers = async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 5, 1), 20);
@@ -159,7 +160,7 @@ exports.getTopVolunteers = async (req, res) => {
         $group: {
           _id: '$user',
           attended: {
-            $sum: { $cond: [{ $in: ['$attendance', ['present', 'late']] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ['$attendance', 'present'] }, 1, 0] },
           },
           joined: { $sum: 1 },
         },
