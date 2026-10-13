@@ -387,7 +387,7 @@ function DashboardView({ goTo }) {
     loadActivityFeed();
   }, []);
 
-  // Top volunteers ranked by how many activities they actually attended (present or late).
+  // Top volunteers ranked by how many activities they actually attended (marked present).
   useEffect(() => {
     const loadTopVolunteers = async () => {
       try {

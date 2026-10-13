@@ -1940,13 +1940,17 @@ function Records() {
     loadRecords()
   }, [])
 
-  // Upcoming activities (attendance not marked yet) stay on My Schedule.
+  // Activities that haven't happened yet stay on My Schedule. Once an activity has happened it
+  // shows here as "Pending" until the organizer finalizes attendance.
+  const endOfToday = new Date()
+  endOfToday.setHours(23, 59, 59, 999)
   const history = records
-    .filter((record) => ['present', 'late', 'absent'].includes(record.attendance))
+    .filter((record) => record.attendance || (record.date && new Date(record.date) <= endOfToday))
     .sort((x, y) => new Date(y.date || 0) - new Date(x.date || 0))
-  const attendedCount = history.filter((record) => record.attendance !== 'absent').length
-  const missedCount = history.length - attendedCount
-  const attendanceRate = history.length ? Math.round((attendedCount / history.length) * 100) : 0
+  const attendedCount = history.filter((record) => record.attendance === 'present').length
+  const missedCount = history.filter((record) => record.attendance === 'absent').length
+  const decidedCount = attendedCount + missedCount
+  const attendanceRate = decidedCount ? Math.round((attendedCount / decidedCount) * 100) : 0
 
   const downloadCertificate = (activity) => {
     const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
@@ -2003,7 +2007,7 @@ function Records() {
 
   const certificates = history.filter((record) => record.certificateIssued)
   const visibleRecords = history.filter((record) => {
-    if (filter === 'attended') return record.attendance !== 'absent'
+    if (filter === 'attended') return record.attendance === 'present'
     if (filter === 'missed') return record.attendance === 'absent'
     if (filter === 'certificates') return record.certificateIssued
     return true
@@ -2031,7 +2035,7 @@ function Records() {
           </div>
           <div>
             <p className="text-xs font-semibold text-gray-500">Attendance rate</p>
-            <p className="text-sm font-bold text-eco-800">{attendedCount} of {history.length} attended</p>
+            <p className="text-sm font-bold text-eco-800">{attendedCount} of {decidedCount} attended</p>
           </div>
         </div>
         <StatCard title="Activities Joined" value={history.length} icon={<Leaf size={18} />} />
@@ -2070,7 +2074,7 @@ function Records() {
         <div className="eco-card overflow-hidden">
           {visibleRecords.map((record) => {
             const missed = record.attendance === 'absent'
-            const late = record.attendance === 'late'
+            const pending = !record.attendance
             return (
               <div
                 key={record._id}
@@ -2090,9 +2094,11 @@ function Records() {
                   {record.date ? new Date(record.date).toLocaleDateString() : '-'}
                 </p>
                 <div className="sm:w-[120px]">
-                  {missed
-                    ? <span className="eco-badge bg-gray-100 text-gray-500">Did not attend</span>
-                    : <span className="eco-badge eco-badge-green"><CheckCircle size={11} /> {late ? 'Late' : 'Present'}</span>}
+                  {pending
+                    ? <span className="eco-badge eco-badge-amber"><Clock size={11} /> Pending</span>
+                    : missed
+                      ? <span className="eco-badge bg-gray-100 text-gray-500">Did not attend</span>
+                      : <span className="eco-badge eco-badge-green"><CheckCircle size={11} /> Present</span>}
                 </div>
                 <div className="flex justify-end sm:w-[150px]">
                   {record.certificateIssued ? (
@@ -2109,6 +2115,8 @@ function Records() {
                     >
                       <Download size={13} /> Certificate
                     </button>
+                  ) : pending ? (
+                    <span className="text-xs text-gray-500">Awaiting organizer</span>
                   ) : missed ? (
                     <span className="text-xs text-gray-400">No certificate</span>
                   ) : (

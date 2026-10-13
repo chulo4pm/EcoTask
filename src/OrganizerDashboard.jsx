@@ -1274,7 +1274,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-  const [selectedActivityForCertificates, setSelectedActivityForCertificates] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editOriginal, setEditOriginal] = useState(null); // snapshot to detect changes + edit rules
   const [editErrors, setEditErrors] = useState({});
@@ -1350,36 +1349,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
     onVolunteersOpened?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openVolunteersFor, loading, activities]);
-
-  const issueCertificates = async (activity) => {
-    if (!window.confirm(`Issue certificates to present volunteers for ${activity.title}?`)) return;
-    try {
-      const adminInfo = JSON.parse(localStorage.getItem('organizerInfo') || '{}');
-      const response = await fetch(`${API_BASE_URL}/api/participation/activity/${activity._id}/certificates`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${adminInfo.token}` },
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Unable to issue certificates');
-      alert(data.message);
-    } catch (requestError) {
-      alert(requestError.message);
-    }
-  };
-
-  const loadCertificateParticipants = async (activity) => {
-    try {
-      const adminInfo = JSON.parse(localStorage.getItem('organizerInfo') || '{}');
-      const response = await fetch(`${API_BASE_URL}/api/participation/activity/${activity._id}`, {
-        headers: { Authorization: `Bearer ${adminInfo.token}` },
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Unable to load attendance');
-      setSelectedActivityForCertificates({ ...activity, certificateParticipants: data });
-    } catch (requestError) {
-      alert(requestError.message);
-    }
-  };
 
   // Delete asks first in a confirmation card (deleteTarget = the activity waiting for an answer).
   const handleDelete = (activity) => {
@@ -1763,11 +1732,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
                 <button onClick={() => loadParticipants(act)} className={`${actionBtn} hover:bg-eco-100 hover:text-eco-800`}>
                   <Users className="h-3.5 w-3.5 text-eco-600" /> Volunteers
                 </button>
-                {status === 'Completed' && (
-                  <button onClick={() => loadCertificateParticipants(act)} className={`${actionBtn} hover:bg-eco-100 hover:text-eco-800`}>
-                    <Award className="h-3.5 w-3.5 text-eco-600" /> Certificates
-                  </button>
-                )}
                 <button onClick={() => handleDelete(act)} className={`${actionBtn} text-rose-600 hover:bg-rose-50`}>
                   <Trash2 className="h-3.5 w-3.5" /> Delete
                 </button>
@@ -2047,93 +2011,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
           </div>
         </div>
       )}
-
-      {selectedActivityForCertificates && (
-        <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 text-slate-800">
-          <div
-            className="absolute inset-0"
-            onClick={() => setSelectedActivityForCertificates(null)}
-          />
-          <div className="ecotask-modal-panel eco-modal relative z-10 w-full max-w-2xl overflow-hidden">
-            <div className="eco-card-header">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-md shadow-amber-500/30">
-                  <Award className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="text-base font-extrabold text-slate-800">Certificates</h3>
-                  <p className="truncate text-xs font-medium text-slate-500">
-                    {selectedActivityForCertificates.title}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedActivityForCertificates(null)}
-                aria-label="Close"
-                className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-              {[
-                { label: 'Present', attendance: 'present' },
-                { label: 'Absent', attendance: 'absent' },
-              ].map((group) => {
-                const groupParticipants = selectedActivityForCertificates.certificateParticipants
-                  .filter((participant) => participant.attendance === group.attendance);
-                const isPresent = group.attendance === 'present';
-                return (
-                  <div key={group.attendance} className={`rounded-2xl border p-4 ${isPresent ? 'border-eco-200 bg-eco-50/60' : 'border-rose-200 bg-rose-50/60'}`}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <h4 className={`flex items-center gap-1.5 text-sm font-extrabold ${isPresent ? 'text-eco-800' : 'text-rose-800'}`}>
-                        {isPresent ? <UserCheck className="h-4 w-4" /> : <UserX className="h-4 w-4" />}
-                        {group.label}
-                      </h4>
-                      <span className={`eco-badge ${isPresent ? 'eco-badge-green' : 'eco-badge-red'}`}>
-                        {groupParticipants.length}
-                      </span>
-                    </div>
-                    <div className="eco-scroll max-h-48 space-y-1.5 overflow-y-auto">
-                      {groupParticipants.length > 0 ? groupParticipants.map((participant) => (
-                        <p key={participant._id} className="flex items-center gap-2.5 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm">
-                          <span className="eco-avatar h-6 w-6 text-[9px]">{getInitials(participant.user?.name)}</span>
-                          {participant.user?.name || 'Unnamed volunteer'}
-                        </p>
-                      )) : (
-                        <p className="py-6 text-center text-xs text-slate-400">No {group.label.toLowerCase()} volunteers.</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="flex justify-end gap-2 border-t border-eco-100 bg-eco-50/40 px-5 py-4">
-              <button
-                type="button"
-                onClick={() => setSelectedActivityForCertificates(null)}
-                className="eco-btn eco-btn-secondary"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                disabled={!selectedActivityForCertificates.certificateParticipants.some((participant) => participant.attendance === 'present')}
-                onClick={async () => {
-                  await issueCertificates(selectedActivityForCertificates);
-                  setSelectedActivityForCertificates(null);
-                }}
-                className="eco-btn eco-btn-primary"
-              >
-                <Award className="h-4 w-4" /> Issue certificates to present
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2148,7 +2025,6 @@ const LIST_FILTERS = ['All', 'Needs attendance', 'Today', 'Upcoming', 'Completed
 const getAttendanceSummary = (activity) => activity.attendance || {
   total: activity.participants?.length || 0,
   present: 0,
-  late: 0,
   absent: 0,
   unmarked: null,
 };
@@ -2156,9 +2032,8 @@ const getAttendanceSummary = (activity) => activity.attendance || {
 const summarizeParticipants = (records) => {
   const count = (value) => records.filter((p) => p.attendance === value).length;
   const present = count('present');
-  const late = count('late');
   const absent = count('absent');
-  return { total: records.length, present, late, absent, unmarked: records.length - present - late - absent };
+  return { total: records.length, present, absent, unmarked: records.length - present - absent };
 };
 
 // Today's activities first, then upcoming (soonest first), then completed (newest first).
@@ -2204,6 +2079,11 @@ function ParticipationRecordView() {
   const [loading, setLoading] = useState(true);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  // Finalize card: open = waiting for an answer, result = outcome shown in the same card.
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeResult, setFinalizeResult] = useState(null);
 
   useEffect(() => {
     const loadActivities = async () => {
@@ -2276,10 +2156,87 @@ function ParticipationRecordView() {
       setActivities((current) => current.map((a) => (
         a._id === selectedActivity ? { ...a, attendance: summarizeParticipants(updated) } : a
       )));
+      setActionError('');
     } catch (requestError) {
-      alert(requestError.message);
+      setActionError(requestError.message);
     }
   };
+
+  // Marks every volunteer who is still unmarked as present.
+  const markAllPresent = async () => {
+    const unmarked = participants.filter((p) => !p.attendance);
+    if (unmarked.length === 0) return;
+    try {
+      const organizerInfo = JSON.parse(localStorage.getItem('organizerInfo') || '{}');
+      const results = await Promise.all(unmarked.map(async (p) => {
+        const response = await fetch(`${API_BASE_URL}/api/participation/${p._id}/attendance`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${organizerInfo.token}` },
+          body: JSON.stringify({ attendance: 'present' }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Unable to update attendance');
+        return data;
+      }));
+      const byId = new Map(results.map((record) => [record._id, record]));
+      const updated = participants.map((p) => byId.get(p._id) || p);
+      setParticipants(updated);
+      setActivities((current) => current.map((a) => (
+        a._id === selectedActivity ? { ...a, attendance: summarizeParticipants(updated) } : a
+      )));
+      setActionError('');
+    } catch (requestError) {
+      setActionError(requestError.message);
+    }
+  };
+
+  const closeFinalizeCard = () => {
+    if (finalizing) return;
+    setFinalizeOpen(false);
+    setFinalizeResult(null);
+  };
+
+  const finalizeAttendance = async () => {
+    if (finalizing) return;
+    setFinalizing(true);
+    setFinalizeResult(null);
+    try {
+      const organizerInfo = JSON.parse(localStorage.getItem('organizerInfo') || '{}');
+      const response = await fetch(`${API_BASE_URL}/api/participation/activity/${selectedActivity}/finalize`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${organizerInfo.token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Unable to finalize attendance');
+      const updated = participants.map((p) => {
+        const attendance = p.attendance || 'absent';
+        return { ...p, attendance, certificateIssued: attendance === 'present' ? true : p.certificateIssued };
+      });
+      setParticipants(updated);
+      setActivities((current) => current.map((a) => (
+        a._id === selectedActivity ? { ...a, attendanceFinalized: true, attendance: summarizeParticipants(updated) } : a
+      )));
+      setFinalizeResult({ type: 'success', message: data.message || 'Attendance finalized.' });
+    } catch (requestError) {
+      setFinalizeResult({
+        type: 'error',
+        message: requestError.message === 'Failed to fetch'
+          ? "Can't reach the server. Please try again."
+          : requestError.message,
+      });
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  // Escape closes the finalize card.
+  useEffect(() => {
+    if (!finalizeOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeFinalizeCard(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalizeOpen, finalizing]);
 
   if (loading) return <div className="eco-card mx-auto h-96 max-w-6xl animate-pulse bg-white/70" />;
   if (error) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</div>;
@@ -2318,23 +2275,24 @@ function ParticipationRecordView() {
   );
 
   const totals = summarizeParticipants(participants);
-  const attended = totals.present + totals.late;
+  const attended = totals.present;
   const attendanceRate = totals.total > 0 ? Math.round((attended / totals.total) * 100) : 0;
   const activeActivity = activities.find((activity) => activity._id === selectedActivity);
   const activeStatus = activeActivity ? getActivityStatus(activeActivity.date) : null;
-
-  const attendanceStyles = {
-    present: 'bg-eco-50 text-eco-800 border-eco-200',
-    absent: 'bg-rose-50 text-rose-800 border-rose-200',
-    late: 'bg-amber-50 text-amber-800 border-amber-200',
-  };
+  const isFinalized = Boolean(activeActivity?.attendanceFinalized);
+  const newCertificates = participants.filter((p) => p.attendance === 'present' && !p.certificateIssued).length;
+  const canFinalize = activeStatus !== 'Upcoming'
+    && totals.total > 0
+    && totals.unmarked === 0
+    && (!isFinalized || newCertificates > 0);
+  const stepsDone = activeStatus === 'Upcoming' ? 0 : (isFinalized && newCertificates === 0 ? 3 : 1);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 text-slate-800">
       {/* Overview Stat Cards (for the selected activity) */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Registered" value={totals.total} icon={Users} />
-        <StatTile label="Attended" value={attended} icon={UserCheck} hint={`${attendanceRate}% rate${totals.late ? ` · ${totals.late} late` : ''}`} />
+        <StatTile label="Attended" value={attended} icon={UserCheck} hint={`${attendanceRate}% rate`} />
         <StatTile label="Absent" value={totals.absent} icon={UserX} />
         <StatTile label="Not marked" value={totals.unmarked} icon={Hourglass} hint={totals.unmarked > 0 && activeStatus !== 'Upcoming' ? 'Mark these volunteers' : undefined} />
       </div>
@@ -2397,7 +2355,10 @@ function ParticipationRecordView() {
                       <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(activity.date).toLocaleDateString()}</span>
                       <span className="flex items-center gap-1"><Users className="h-3 w-3" />{summary.total} / {activity.volunteerLimit}</span>
                     </p>
-                    {summary.total > 0 && marked !== null && status !== 'Upcoming' && (
+                    {activity.attendanceFinalized && (
+                      <span className="eco-badge eco-badge-green mt-2"><CheckCircle2 className="h-3 w-3" /> Finalized</span>
+                    )}
+                    {!activity.attendanceFinalized && summary.total > 0 && marked !== null && status !== 'Upcoming' && (
                       <div className="mt-2 flex items-center gap-2">
                         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
                           <div
@@ -2448,6 +2409,38 @@ function ParticipationRecordView() {
             </div>
           </div>
 
+          {activeStatus !== 'Upcoming' && participants.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-eco-100 bg-eco-50/40 px-5 py-3 text-xs font-bold">
+              {[
+                { n: 1, label: 'Activity ended', done: true },
+                { n: 2, label: 'Mark attendance', done: totals.unmarked === 0 },
+                { n: 3, label: 'Finalize & issue certificates', done: stepsDone === 3 },
+              ].map((step, index, all) => {
+                const current = !step.done && all.slice(0, index).every((previous) => previous.done);
+                return (
+                  <span key={step.n} className="flex items-center gap-2">
+                    {index > 0 && <span className="h-0.5 w-6 rounded bg-eco-200" />}
+                    <span className={`flex items-center gap-1.5 ${step.done || current ? 'text-eco-800' : 'text-slate-400'}`}>
+                      <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${step.done ? 'bg-eco-600 text-white' : current ? 'bg-eco-800 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                        {step.done ? '✓' : step.n}
+                      </span>
+                      {step.label}
+                    </span>
+                  </span>
+                );
+              })}
+              <span className={`eco-badge ml-auto ${isFinalized ? 'eco-badge-green' : 'eco-badge-amber'}`}>
+                {isFinalized ? 'Finalized' : 'Draft · volunteers see "Pending"'}
+              </span>
+            </div>
+          )}
+
+          {actionError && (
+            <p role="alert" className="mx-5 mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {actionError}
+            </p>
+          )}
+
           {activeStatus === 'Upcoming' && participants.length > 0 && (
             <p className="mx-5 mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-semibold text-sky-800">
               This activity hasn't happened yet. You can mark attendance on the day.
@@ -2477,21 +2470,25 @@ function ParticipationRecordView() {
                       </td>
                       <td className="text-slate-500">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '-'}</td>
                       <td>
-                        <div className="relative inline-block w-36">
-                          <select
-                            value={p.attendance || ''}
-                            onChange={(e) => handleAttendanceChange(p._id, e.target.value)}
-                            className={`w-full cursor-pointer appearance-none rounded-xl border px-3 py-2 text-xs font-bold outline-none transition focus:ring-4 focus:ring-eco-200/50 ${
-                              attendanceStyles[p.attendance] || 'border-slate-200 bg-slate-50 text-slate-600'
-                            }`}
-                          >
-                            {!p.attendance && <option value="" disabled>Not marked</option>}
-                            <option value="present">Present</option>
-                            <option value="absent">Absent</option>
-                            <option value="late">Late</option>
-                          </select>
-                          <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
+                        <div className="inline-flex overflow-hidden rounded-xl border border-eco-200 bg-white text-xs font-bold">
+                          {[
+                            { value: 'present', label: 'Present', active: 'bg-eco-600 text-white' },
+                            { value: 'absent', label: 'Absent', active: 'bg-rose-600 text-white' },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              disabled={activeStatus === 'Upcoming'}
+                              onClick={() => p.attendance !== option.value && handleAttendanceChange(p._id, option.value)}
+                              className={`px-3.5 py-2 transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                p.attendance === option.value ? option.active : 'text-slate-500 hover:bg-eco-50'
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
                         </div>
+                        {!p.attendance && <span className="eco-badge eco-badge-amber ml-2">Not marked</span>}
                       </td>
                     </tr>
                   ))
@@ -2505,8 +2502,97 @@ function ParticipationRecordView() {
               </tbody>
             </table>
           </div>
+
+          {activeStatus !== 'Upcoming' && participants.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-eco-100 bg-eco-50/40 px-5 py-4">
+              <p className="text-xs text-slate-500">
+                <span className="font-bold text-slate-800">{totals.present} present</span> · {totals.absent} absent ·{' '}
+                <span className={`font-bold ${totals.unmarked > 0 ? 'text-amber-700' : 'text-slate-800'}`}>{totals.unmarked} not marked</span>
+                <br />Marks save automatically.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {totals.unmarked > 0 && (
+                  <button type="button" onClick={markAllPresent} className="eco-btn eco-btn-secondary">
+                    <UserCheck className="h-4 w-4" /> Mark all present
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={!canFinalize}
+                  onClick={() => { setFinalizeResult(null); setFinalizeOpen(true); }}
+                  className="eco-btn eco-btn-primary"
+                >
+                  <Award className="h-4 w-4" />
+                  {isFinalized
+                    ? (newCertificates > 0 ? `Issue ${newCertificates} new certificate${newCertificates === 1 ? '' : 's'}` : 'Finalized')
+                    : 'Finalize & issue certificates'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {finalizeOpen && (() => {
+        const done = finalizeResult?.type === 'success';
+        return (
+          <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 text-slate-800">
+            <div className="absolute inset-0" onClick={closeFinalizeCard} />
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="finalize-attendance-title"
+              className="ecotask-modal-panel eco-modal relative z-10 w-full max-w-md overflow-hidden"
+            >
+              <div className="px-6 pb-2 pt-6 text-center">
+                <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border ${done ? 'border-eco-200 bg-eco-50 text-eco-700' : 'border-amber-200 bg-amber-50 text-amber-600'}`}>
+                  {done ? <CheckCircle2 className="h-6 w-6" /> : <Award className="h-6 w-6" />}
+                </span>
+                <h3 id="finalize-attendance-title" className="mt-4 text-lg font-extrabold text-slate-800">
+                  {done ? 'Attendance finalized' : isFinalized ? 'Issue new certificates?' : 'Finalize attendance?'}
+                </h3>
+                <p className="mt-1 text-sm font-semibold text-slate-700 [overflow-wrap:anywhere]">{activeActivity?.title}</p>
+              </div>
+
+              <div className="space-y-3 px-6 py-4">
+                {done ? (
+                  <div className="rounded-xl border border-eco-200 bg-eco-50 p-3 text-center text-xs font-semibold leading-relaxed text-eco-800">
+                    {finalizeResult.message}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
+                    <p className="font-bold">This will:</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                      <li>Issue certificates to <span className="font-bold">{newCertificates} present volunteer{newCertificates === 1 ? '' : 's'}</span></li>
+                      {!isFinalized && <li>Show final attendance to all volunteers</li>}
+                    </ul>
+                    <p className="mt-2">You can still edit marks later and issue certificates to anyone newly marked present.</p>
+                  </div>
+                )}
+
+                {finalizeResult?.type === 'error' && (
+                  <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-xs font-semibold text-rose-700">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {finalizeResult.message}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 border-t border-slate-100 px-6 py-4">
+                {done ? (
+                  <button type="button" onClick={closeFinalizeCard} className="eco-btn eco-btn-primary flex-1">Done</button>
+                ) : (
+                  <>
+                    <button type="button" onClick={closeFinalizeCard} disabled={finalizing} className="eco-btn eco-btn-muted flex-1">Cancel</button>
+                    <button type="button" onClick={finalizeAttendance} disabled={finalizing} className="eco-btn eco-btn-primary flex-1">
+                      <Award className="h-4 w-4" /> {finalizing ? 'Working...' : isFinalized ? 'Issue certificates' : 'Finalize & issue'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
