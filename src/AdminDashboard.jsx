@@ -105,7 +105,7 @@ export default function AdminDashboard({ onLogout }) {
     'Activity Oversight': { title: 'Activity Oversight', subtitle: 'See every activity, hide problem activities, and assign older ones.' },
     Reports: { title: 'Reports', subtitle: 'Activities reported by volunteers.' },
     'User Management': { title: 'User Management', subtitle: 'View and manage volunteer and organizer accounts.' },
-    Announcements: { title: 'Announcements', subtitle: 'Post updates for all volunteers.' },
+    Announcements: { title: 'Announcements', subtitle: 'Post updates for volunteers, organizers, or everyone.' },
     Settings: { title: 'Account Settings', subtitle: 'Manage your admin profile, password, and sessions.' },
   };
   const todayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -2868,7 +2868,7 @@ const MESSAGE_MAX = 2000;
 
 // "Who can see this?" choice (shared by the post form and the edit card)
 const CategoryPicker = ({ value, onChange }) => (
-  <div role="radiogroup" aria-label="Who can see this?" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+  <div role="radiogroup" aria-label="Who can see this?" className="grid grid-cols-1 gap-2">
     {ANNOUNCEMENT_AUDIENCES.map((option) => {
       const selected = value === option.value;
       return (
@@ -2878,15 +2878,15 @@ const CategoryPicker = ({ value, onChange }) => (
           role="radio"
           aria-checked={selected}
           onClick={() => onChange(option.value)}
-          className={`rounded-xl border-[1.5px] px-3 py-2.5 text-left transition ${
+          className={`flex w-full min-w-0 items-center gap-3 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition ${
             selected ? 'border-eco-600 bg-eco-50 ring-4 ring-eco-200/40' : 'border-slate-200 bg-white hover:border-eco-300'
           }`}
         >
-          <span className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
-            <span className={`h-4 w-4 shrink-0 rounded-full border-2 ${selected ? 'border-eco-600 bg-[radial-gradient(circle,#15803d_45%,#fff_50%)]' : 'border-slate-300'}`} />
-            {option.label}
+          <span className={`h-4 w-4 shrink-0 rounded-full border-2 ${selected ? 'border-eco-600 bg-[radial-gradient(circle,#15803d_45%,#fff_50%)]' : 'border-slate-300'}`} />
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-sm font-extrabold text-slate-800">{option.label}</span>
+            <span className="text-xs leading-snug text-slate-500">{option.hint}</span>
           </span>
-          <span className="mt-1 block text-[11px] leading-snug text-slate-500">{option.hint}</span>
         </button>
       );
     })}
@@ -3082,9 +3082,9 @@ function AnnouncementsView() {
 
   return (
     <>
-    <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-6 text-slate-800 lg:grid-cols-12">
+    <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-6 text-slate-800 xl:grid-cols-12">
       {/* Creation Card */}
-      <div className="eco-card overflow-hidden lg:sticky lg:top-0 lg:col-span-5">
+      <div className="eco-card overflow-hidden xl:sticky xl:top-0 xl:col-span-5">
         <CardTitle icon={Megaphone}>New Announcement</CardTitle>
 
         <div className="p-5">
@@ -3150,7 +3150,7 @@ function AnnouncementsView() {
       </div>
 
       {/* History Card */}
-      <div className="eco-card overflow-hidden lg:col-span-7">
+      <div className="eco-card overflow-hidden xl:col-span-7">
         <CardTitle
           icon={Clock}
           right={<span className="eco-badge eco-badge-green">{announcements.length} posts</span>}
