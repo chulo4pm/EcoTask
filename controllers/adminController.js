@@ -6,6 +6,9 @@ const User = require('../models/User');
 const Activity = require('../models/Activity');
 const Participation = require('../models/Participation');
 const { notifyUsers } = require('../utils/notify');
+const { logActivityEvent } = require('../utils/activityLog');
+const Report = require('../models/Report');
+const ActivityEvent = require('../models/ActivityEvent');
 const { DOCUMENT_DIR } = require('../middleware/documentUpload');
 const { BUCKETS, findFile, openDownloadStream, deleteFile } = require('../utils/fileStore');
 
@@ -166,6 +169,20 @@ exports.setActivityVisibility = async (req, res) => {
     ).populate('organizer', 'name organizationName');
 
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+    logActivityEvent({
+      activity: activity._id,
+      type: hidden ? 'hidden' : 'unhidden',
+      message: hidden ? `Hidden by admin: ${reason}` : 'Made visible again by admin',
+      actor: req.user._id,
+    });
+    // Tell the organizer (they also see the reason on the activity card).
+    if (activity.organizer) {
+      notifyUsers([activity.organizer._id || activity.organizer], hidden
+        ? { type: 'activity_hidden', title: 'Activity hidden by admin', message: `${activity.title} is hidden from volunteers. Reason: ${reason}`, activity: activity._id }
+        : { type: 'activity_unhidden', title: 'Activity visible again', message: `${activity.title} is visible to volunteers again.`, activity: activity._id });
+    }
+
     res.json({ message: hidden ? 'Activity hidden.' : 'Activity visible again.', activity });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -189,6 +206,12 @@ exports.assignActivityOrganizer = async (req, res) => {
     ).populate('organizer', 'name organizationName');
 
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    logActivityEvent({
+      activity: activity._id,
+      type: 'assigned',
+      message: `Assigned to ${organizer.organizationName || organizer.name}`,
+      actor: req.user._id,
+    });
     res.json({ message: `Assigned to ${organizer.organizationName || organizer.name}.`, activity });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -409,6 +432,84 @@ exports.deleteOrganizer = async (req, res) => {
 
     res.json({
       message: `${label} deleted. ${result.modifiedCount} activit${result.modifiedCount === 1 ? 'y was' : 'ies were'} hidden and can be reassigned in Activity Oversight.`,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+// GET /api/admin/activities/:id/details
+// Everything the admin's details panel shows: the activity, sign-ups, attendance,
+// reports and a history built from the activity's records plus the change log.
+exports.getActivityDetails = async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) return res.status(404).json({ message: 'Activity not found' });
+    const activity = await Activity.findById(req.params.id)
+      .populate('organizer', 'name organizationName email isSuspended');
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+    const [participations, reports, events] = await Promise.all([
+      Participation.find({ activity: activity._id }).populate('user', 'name').sort({ joinedAt: 1 }),
+      Report.find({ activity: activity._id }).populate('reporter', 'name').sort({ createdAt: -1 }),
+      ActivityEvent.find({ activity: activity._id }).sort({ createdAt: -1 }).limit(100),
+    ]);
+
+    const attendance = participations.reduce((acc, p) => {
+      if (p.attendance === 'present') acc.present += 1;
+      else if (p.attendance === 'absent') acc.absent += 1;
+      else acc.unmarked += 1;
+      return acc;
+    }, { total: participations.length, present: 0, absent: 0, unmarked: 0 });
+
+    const orgName = activity.organizer ? (activity.organizer.organizationName || activity.organizer.name) : 'the admin';
+    const history = [
+      { at: activity.createdAt, kind: 'created', text: `Created by ${orgName}` },
+      ...participations.map((p) => ({ at: p.joinedAt || p.createdAt, kind: 'joined', text: `${p.user?.name || 'A volunteer'} joined` })),
+      ...reports.map((r) => ({ at: r.createdAt, kind: 'report', text: `Reported: ${r.reason}` })),
+      ...reports.filter((r) => r.status === 'dismissed' && r.resolvedAt)
+        .map((r) => ({ at: r.resolvedAt, kind: 'report-dismissed', text: `Report dismissed (${r.reason})` })),
+      ...events.map((e) => ({ at: e.createdAt, kind: e.type, text: e.message })),
+    ];
+    // Hidden / finalized before the change log existed: use the dates saved on the activity.
+    if (activity.isHidden && activity.hiddenAt && !events.some((e) => e.type === 'hidden')) {
+      history.push({ at: activity.hiddenAt, kind: 'hidden', text: `Hidden by admin${activity.hiddenReason ? `: ${activity.hiddenReason}` : ''}` });
+    }
+    if (activity.attendanceFinalizedAt && !events.some((e) => e.type === 'finalized')) {
+      history.push({ at: activity.attendanceFinalizedAt, kind: 'finalized', text: `Attendance finalized · ${attendance.present} present, ${attendance.absent} absent` });
+    }
+    history.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    res.json({
+      activity: {
+        _id: activity._id,
+        title: activity.title,
+        description: activity.description,
+        location: activity.location,
+        meetingPlace: activity.meetingPlace,
+        date: activity.date,
+        time: activity.time,
+        volunteerLimit: activity.volunteerLimit,
+        participantCount: participations.length,
+        coverImage: activity.coverImage,
+        isHidden: !!activity.isHidden,
+        hiddenReason: activity.hiddenReason || '',
+        hiddenBySuspension: !!activity.hiddenBySuspension,
+        attendanceFinalized: !!activity.attendanceFinalized,
+        organizer: activity.organizer,
+      },
+      attendance,
+      reports: reports.map((r) => ({
+        _id: r._id,
+        reason: r.reason,
+        details: r.details,
+        status: r.status,
+        adminNote: r.adminNote,
+        reporter: r.reporter?.name || 'Deleted user',
+        createdAt: r.createdAt,
+        resolvedAt: r.resolvedAt,
+      })),
+      history: history.slice(0, 40),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

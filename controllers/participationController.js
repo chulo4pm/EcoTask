@@ -3,6 +3,7 @@
 const Participation = require('../models/Participation');
 const Activity = require('../models/Activity');
 const { notifyUsers } = require('../utils/notify');
+const { logActivityEvent } = require('../utils/activityLog');
 
 // Checks that the logged-in organizer owns the activity. Admins may view (read-only).
 const canManageActivity = (user, activity) => (
@@ -85,6 +86,12 @@ exports.finalizeActivityAttendance = async (req, res) => {
     activity.attendanceFinalized = true;
     activity.attendanceFinalizedAt = new Date();
     await activity.save();
+    logActivityEvent({
+      activity: activity._id,
+      type: 'finalized',
+      message: `${wasFinalized ? 'Attendance updated' : 'Attendance finalized'} · ${presentCount} present, ${absentCount} absent`,
+      actor: req.user._id,
+    });
 
     // Tell volunteers: everyone the first time, afterwards only those who just got a certificate.
     const everyone = await Participation.find({ activity: activity._id }).select('user attendance');

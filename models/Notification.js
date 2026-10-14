@@ -15,6 +15,9 @@ const notificationSchema = new mongoose.Schema({
       'organizer_rejected',    // organizer: application rejected
       'volunteer_joined',      // organizer: a volunteer joined their activity
       'organizer_application', // admin: a new organizer application needs review
+      'report_reviewed',       // volunteer: the admin reviewed their report
+      'activity_hidden',       // organizer: the admin hid one of their activities
+      'activity_unhidden',     // organizer: the admin made it visible again
     ],
     required: true,
   },

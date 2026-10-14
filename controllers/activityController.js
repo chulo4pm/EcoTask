@@ -4,6 +4,7 @@ const Activity = require('../models/Activity');
 const Participation = require('../models/Participation');
 const Report = require('../models/Report');
 const { notifyUsers, notifyVolunteers } = require('../utils/notify');
+const { logActivityEvent } = require('../utils/activityLog');
 const fs = require('fs/promises');
 const path = require('path');
 const { BUCKETS, deleteFile } = require('../utils/fileStore');
@@ -281,11 +282,33 @@ exports.updateActivity = async (req, res) => {
     });
     const previousTitle = activity.title;
 
+    // Everything that changed, for the admin's history (includes description and limit).
+    const LOG_LABELS = { ...CHANGE_LABELS, description: 'description', volunteerLimit: 'volunteer limit' };
+    const logChanges = Object.keys(LOG_LABELS).filter((field) => {
+      if (updates[field] === undefined) return false;
+      if (field === 'date') return startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
+      return String(updates[field]) !== String(activity[field] ?? '');
+    }).map((field) => {
+      if (field === 'time') return `time ${activity.time || '—'} → ${updates.time}`;
+      if (field === 'volunteerLimit') return `volunteer limit ${activity.volunteerLimit} → ${updates.volunteerLimit}`;
+      return LOG_LABELS[field];
+    });
+    if (req.file) logChanges.push('cover image');
+
     const oldImage = activity.coverImage;
     Object.assign(activity, updates);
     if (req.file) activity.coverImage = `/uploads/activities/${req.file.filename}`;
     await activity.save();
     if (req.file && oldImage !== activity.coverImage) await removeStoredImage(oldImage);
+
+    if (logChanges.length > 0) {
+      logActivityEvent({
+        activity: activity._id,
+        type: 'edited',
+        message: `Edited: ${logChanges.join(', ')}`,
+        actor: req.user._id,
+      });
+    }
 
     if (changed.length > 0) {
       notifyUsers(activity.participants, {
@@ -393,6 +416,7 @@ exports.leaveActivity = async (req, res) => {
     activity.participants.splice(participantIndex, 1);
     await activity.save();
     await Participation.deleteOne({ activity: activity._id, user: req.user._id });
+    logActivityEvent({ activity: activity._id, type: 'left', message: `${req.user.name} left`, actor: req.user._id });
 
     res.json({ message: 'You left the activity successfully' });
   } catch (error) {
