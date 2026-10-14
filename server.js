@@ -46,6 +46,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('Connected in EcoTask Database');
     require('./utils/cleanupUnverified').startUnverifiedCleanup();
+    require('./controllers/announcementController').migrateAnnouncementCategories();
   })
   .catch((err) => console.error('MongoDB Connection Error:', err));
 

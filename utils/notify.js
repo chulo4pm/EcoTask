@@ -42,4 +42,19 @@ const notifyVolunteers = async (payload) => {
   }
 };
 
-module.exports = { notifyUsers, notifyAdmins, notifyVolunteers };
+// Every approved, active organizer.
+const notifyOrganizers = async (payload) => {
+  try {
+    const organizers = await User.find({
+      role: 'organizer',
+      organizerStatus: 'approved',
+      isSuspended: { $ne: true },
+      isEmailVerified: { $ne: false },
+    }).select('_id');
+    await notifyUsers(organizers.map((o) => o._id), payload);
+  } catch (err) {
+    console.error('Could not notify organizers:', err.message);
+  }
+};
+
+module.exports = { notifyUsers, notifyAdmins, notifyVolunteers, notifyOrganizers };

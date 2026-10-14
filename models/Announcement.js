@@ -6,6 +6,7 @@ const announcementSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  // Who can see it: 'Volunteer', 'Organizer' or 'General' (both).
   category: {
     type: String,
     default: 'General',
