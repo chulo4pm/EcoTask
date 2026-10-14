@@ -20,6 +20,13 @@ const removeStoredImage = async (imagePath) => {
   }
 };
 
+// Removes a cover image that was uploaded with a request that then failed,
+// so it doesn't stay in the database with no activity using it.
+const discardUploadedImage = async (req) => {
+  if (!req.file?.filename) return;
+  await removeStoredImage(`/uploads/activities/${req.file.filename}`).catch(() => {});
+};
+
 const parseTasks = (tasks) => {
   if (Array.isArray(tasks)) return tasks.map(String);
   if (!tasks) return [];
@@ -225,11 +232,12 @@ exports.getActivities = async (req, res) => {
 
 // Create a new activity. The logged-in organizer becomes its owner.
 exports.createActivity = async (req, res) => {
+  let imageInUse = false;
   try {
     const data = pickActivityFields(req.body);
     const errors = validateActivityFields(data);
     if (Object.keys(errors).length > 0) {
-      if (req.file) await removeStoredImage(`/uploads/activities/${req.file.filename}`);
+      await discardUploadedImage(req);
       return res.status(400).json({ message: Object.values(errors)[0], errors });
     }
 
@@ -238,6 +246,7 @@ exports.createActivity = async (req, res) => {
       organizer: req.user._id,
       coverImage: req.file ? `/uploads/activities/${req.file.filename}` : null,
     });
+    imageInUse = true;
 
     notifyVolunteers({
       type: 'activity_published',
@@ -249,25 +258,32 @@ exports.createActivity = async (req, res) => {
     await activity.populate('organizer', 'name organizationName');
     res.status(201).json(formatActivity(activity));
   } catch (error) {
+    if (!imageInUse) await discardUploadedImage(req);
     res.status(400).json({ message: error.message });
   }
 };
 
 // Update an activity the organizer owns.
 exports.updateActivity = async (req, res) => {
+  let imageInUse = false;
   try {
     const activity = await findOwnedActivity(req, res);
-    if (!activity) return;
+    if (!activity) {
+      await discardUploadedImage(req);
+      return;
+    }
 
     const updates = pickActivityFields(req.body);
     const dateChanged = updates.date !== undefined
       && startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
     const errors = validateActivityFields(updates, { partial: true, checkFutureDate: dateChanged });
     if (Object.keys(errors).length > 0) {
+      await discardUploadedImage(req);
       return res.status(400).json({ message: Object.values(errors)[0], errors });
     }
 
     if (updates.volunteerLimit !== undefined && updates.volunteerLimit < activity.participants.length) {
+      await discardUploadedImage(req);
       return res.status(400).json({
         message: `Volunteer limit can't be lower than the ${activity.participants.length} volunteers who already joined.`,
       });
@@ -299,6 +315,7 @@ exports.updateActivity = async (req, res) => {
     Object.assign(activity, updates);
     if (req.file) activity.coverImage = `/uploads/activities/${req.file.filename}`;
     await activity.save();
+    imageInUse = true;
     if (req.file && oldImage !== activity.coverImage) await removeStoredImage(oldImage);
 
     if (logChanges.length > 0) {
@@ -323,6 +340,7 @@ exports.updateActivity = async (req, res) => {
     await activity.populate('organizer', 'name organizationName');
     res.json(formatActivity(activity));
   } catch (error) {
+    if (!imageInUse) await discardUploadedImage(req);
     res.status(400).json({ message: error.message });
   }
 };
