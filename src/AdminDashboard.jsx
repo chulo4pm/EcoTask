@@ -2846,24 +2846,50 @@ function VolunteerManagementView() {
    ANNOUNCEMENTS VIEW
    ========================================== */
 // Announcement rules (match the backend in announcementController.js).
-const ANNOUNCEMENT_CATEGORIES = ['Important', 'Organizer Updates', 'General'];
+// The category is the audience (the server enforces it).
+const ANNOUNCEMENT_AUDIENCES = [
+  { value: 'Volunteer', label: 'Volunteers', hint: 'Only volunteers see it.' },
+  { value: 'Organizer', label: 'Organizers', hint: 'Only organizers see it.' },
+  { value: 'General', label: 'General', hint: 'Volunteers and organizers see it.' },
+];
+const ANNOUNCEMENT_CATEGORIES = ANNOUNCEMENT_AUDIENCES.map((a) => a.value);
+const AUDIENCE_BADGE = {
+  Volunteer: { label: 'Volunteers', className: 'eco-badge eco-badge-green', bar: 'from-eco-400 to-eco-700' },
+  Organizer: { label: 'Organizers', className: 'eco-badge eco-badge-blue', bar: 'from-sky-300 to-sky-600' },
+  General: { label: 'General', className: 'eco-badge border border-violet-200 bg-violet-50 text-violet-700', bar: 'from-violet-300 to-violet-600' },
+};
+const NOTIFY_HINT = {
+  Volunteer: 'Volunteers will get a notification.',
+  Organizer: 'Approved organizers will get a notification.',
+  General: 'Volunteers and approved organizers will get a notification.',
+};
 const TITLE_MAX = 100;
 const MESSAGE_MAX = 2000;
 
-// Category chips (shared by the post form and the edit card)
+// "Who can see this?" choice (shared by the post form and the edit card)
 const CategoryPicker = ({ value, onChange }) => (
-  <div className="flex flex-wrap gap-1.5">
-    {ANNOUNCEMENT_CATEGORIES.map((category) => (
-      <button
-        key={category}
-        type="button"
-        onClick={() => onChange(category)}
-        aria-pressed={value === category}
-        className={`eco-chip px-3 py-1.5 text-xs ${value === category ? 'eco-chip-active' : ''}`}
-      >
-        {category}
-      </button>
-    ))}
+  <div role="radiogroup" aria-label="Who can see this?" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+    {ANNOUNCEMENT_AUDIENCES.map((option) => {
+      const selected = value === option.value;
+      return (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          onClick={() => onChange(option.value)}
+          className={`rounded-xl border-[1.5px] px-3 py-2.5 text-left transition ${
+            selected ? 'border-eco-600 bg-eco-50 ring-4 ring-eco-200/40' : 'border-slate-200 bg-white hover:border-eco-300'
+          }`}
+        >
+          <span className="flex items-center gap-2 text-sm font-extrabold text-slate-800">
+            <span className={`h-4 w-4 shrink-0 rounded-full border-2 ${selected ? 'border-eco-600 bg-[radial-gradient(circle,#15803d_45%,#fff_50%)]' : 'border-slate-300'}`} />
+            {option.label}
+          </span>
+          <span className="mt-1 block text-[11px] leading-snug text-slate-500">{option.hint}</span>
+        </button>
+      );
+    })}
   </div>
 );
 
@@ -2878,6 +2904,10 @@ function AnnouncementsView() {
   const [loading, setLoading] = useState(true);
   const emptyForm = { title: '', category: 'General', description: '' };
   const [formData, setFormData] = useState(emptyForm);
+  const [audienceFilter, setAudienceFilter] = useState('all');
+  const visibleAnnouncements = audienceFilter === 'all'
+    ? announcements
+    : announcements.filter((a) => (a.category || 'General') === audienceFilter);
   const [posting, setPosting] = useState(false);
   const [notification, setNotification] = useState('');
   const [notificationType, setNotificationType] = useState('info'); // 'success' | 'info'
@@ -3087,8 +3117,9 @@ function AnnouncementsView() {
               />
             </div>
             <div>
-              <label className="eco-label">Category</label>
+              <label className="eco-label">Who can see this?</label>
               <CategoryPicker value={formData.category} onChange={(category) => setFormData((prev) => ({ ...prev, category }))} />
+              <p className="mt-1.5 text-[11px] text-slate-500">{NOTIFY_HINT[formData.category] || ''}</p>
             </div>
             <div>
               <div className="flex items-center justify-between">
@@ -3127,12 +3158,27 @@ function AnnouncementsView() {
           Posted Announcements
         </CardTitle>
 
+        <div className="flex flex-wrap gap-2 border-b border-eco-100 px-4 py-3">
+          {[{ value: 'all', label: 'All' }, ...ANNOUNCEMENT_AUDIENCES].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setAudienceFilter(option.value)}
+              className={`eco-chip ${audienceFilter === option.value ? 'eco-chip-active' : ''}`}
+            >
+              {option.label}
+              <span className="eco-chip-count">
+                {option.value === 'all' ? announcements.length : announcements.filter((a) => (a.category || 'General') === option.value).length}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <div className="eco-scroll max-h-[620px] space-y-3 overflow-y-auto p-4">
-          {announcements.length > 0 ? (
-            announcements.map((item) => {
-              const category = (item.category || '').toUpperCase();
-              const tone = category === 'IMPORTANT' ? 'red' : category === 'ORGANIZER UPDATES' ? 'blue' : 'green';
-              const bar = { red: 'from-red-300 to-red-500', blue: 'from-sky-300 to-sky-600', green: 'from-eco-400 to-eco-700' }[tone];
+          {visibleAnnouncements.length > 0 ? (
+            visibleAnnouncements.map((item) => {
+              const audience = AUDIENCE_BADGE[item.category] || AUDIENCE_BADGE.General;
+              const bar = audience.bar;
               return (
                 <article
                   key={item._id || item.id}
@@ -3141,11 +3187,7 @@ function AnnouncementsView() {
                   <span className={`absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${bar}`} />
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <h4 className="text-sm font-extrabold text-slate-800 [overflow-wrap:anywhere]">{item.title}</h4>
-                    {item.category && (
-                      <span className={`eco-badge ${tone === 'red' ? 'eco-badge-red' : tone === 'blue' ? 'eco-badge-blue' : 'eco-badge-green'}`}>
-                        {item.category}
-                      </span>
-                    )}
+                    <span className={audience.className}>{audience.label}</span>
                   </div>
 
                   <p className="mt-0.5 text-[11px] font-medium text-slate-400">
@@ -3178,7 +3220,7 @@ function AnnouncementsView() {
           ) : (
             <div className="eco-empty py-12">
               <Megaphone className="h-6 w-6 text-eco-400" />
-              No announcements posted yet.
+              {announcements.length === 0 ? 'No announcements posted yet.' : 'No announcements for this audience.'}
             </div>
           )}
         </div>
@@ -3228,7 +3270,7 @@ function AnnouncementsView() {
               />
             </div>
             <div>
-              <label className="eco-label">Category</label>
+              <label className="eco-label">Who can see this?</label>
               <CategoryPicker value={editing.category} onChange={(category) => { setEditing((prev) => ({ ...prev, category })); setEditError(''); }} />
             </div>
             <div>
@@ -3245,7 +3287,7 @@ function AnnouncementsView() {
                 className="eco-input resize-y"
               />
             </div>
-            <p className="text-[11px] text-slate-400">Volunteers will see an "Edited" label on this announcement.</p>
+            <p className="text-[11px] text-slate-400">Everyone who can see it will see an "Edited" label. Changing who can see it doesn't send new notifications.</p>
           </div>
 
           <div className="flex items-center justify-end gap-2 border-t border-eco-100 bg-eco-50/40 px-5 py-4">

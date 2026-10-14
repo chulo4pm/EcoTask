@@ -99,6 +99,7 @@ import {
   Lock,
 } from 'lucide-react'
 import { NOTIFICATION_STYLES, formatNotificationTime, notificationRequest } from './notificationApi'
+import AnnouncementsFeed from './AnnouncementsFeed'
 import { API_BASE_URL } from "./config";
 
 /* =========================================================
@@ -2311,151 +2312,11 @@ function Records() {
 ========================================================= */
 
 function Announcement() {
-  const [activeFilter, setActiveFilter] = useState('ALL')
-  const [announcements, setAnnouncements] = useState([])
-
-  useEffect(() => {
-    const loadAnnouncements = async () => {
-      try {
-        const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-        const response = await fetch(`${API_BASE_URL}/api/announcements`, {
-          headers: { Authorization: `Bearer ${userInfo.token}` },
-        })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.message || 'Unable to load announcements')
-        setAnnouncements(data)
-      } catch (error) {
-        console.error(error)
-      }
-    }
-
-    loadAnnouncements()
-  }, [])
-
-  const filteredAnnouncements = announcements.filter((item) => {
-    if (activeFilter === 'ALL') return true
-    return item.category?.toUpperCase() === activeFilter
-  })
-
-  const newAnnouncements = filteredAnnouncements.slice(0, 3)
-  const recentAnnouncements = filteredAnnouncements.slice(3)
-
-  const categoryTone = (category = '') => {
-    const value = category.toUpperCase()
-    if (value === 'IMPORTANT') return 'red'
-    if (value === 'ORGANIZER UPDATES') return 'blue'
-    return 'green'
-  }
-
   return (
     <div className="mx-auto max-w-[1100px] p-5 lg:p-8">
-      <PageHeader title="Announcements" subtitle="Updates and reminders from the EcoTask organizers.">
-        {[
-          { key: 'ALL', label: 'All', icon: null },
-          { key: 'IMPORTANT', label: 'Important', icon: <Bell size={12} /> },
-          { key: 'ORGANIZER UPDATES', label: 'Organizer updates', icon: <Megaphone size={12} /> },
-        ].map((filter) => (
-          <button
-            key={filter.key}
-            onClick={() => setActiveFilter(filter.key)}
-            className={`eco-chip ${activeFilter === filter.key ? 'eco-chip-active' : ''}`}
-          >
-            {filter.icon}
-            {filter.label}
-          </button>
-        ))}
-      </PageHeader>
-
-      {newAnnouncements.length > 0 && (
-        <section>
-          <p className="mb-2.5 flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.12em] text-eco-700">
-            <span className="h-2 w-2 rounded-full bg-eco-500 shadow-[0_0_0_4px_rgba(102,187,106,0.25)]" />
-            Latest
-          </p>
-
-          <div className="space-y-3">
-            {newAnnouncements.map((item) => (
-              <AnnouncementCard
-                key={item._id}
-                icon={<Bell size={16} />}
-                title={item.title}
-                category={item.category}
-                tone={categoryTone(item.category)}
-                posted={`${item.author?.name || 'Admin'} • ${new Date(item.createdAt).toLocaleString()}`}
-                editedAt={item.editedAt}
-                text={item.description || item.message}
-                highlight
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {recentAnnouncements.length > 0 && (
-        <section className="mt-8">
-          <p className="mb-2.5 text-xs font-extrabold uppercase tracking-[0.12em] text-gray-500">
-            Earlier
-          </p>
-
-          <div className="space-y-3">
-            {recentAnnouncements.map((item) => (
-              <AnnouncementCard
-                key={item._id}
-                icon={<Megaphone size={16} />}
-                title={item.title}
-                category={item.category}
-                tone={categoryTone(item.category)}
-                posted={`${item.author?.name || 'Admin'} • ${new Date(item.createdAt).toLocaleString()}`}
-                editedAt={item.editedAt}
-                text={item.description || item.message}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {filteredAnnouncements.length === 0 && (
-        <div className="eco-empty py-12">
-          <Megaphone size={24} className="text-eco-400" />
-          No announcements found for this category.
-        </div>
-      )}
+      <PageHeader title="Announcements" subtitle="News and updates from the EcoTask admin." />
+      <AnnouncementsFeed storageKey="userInfo" audience="Volunteer" />
     </div>
-  )
-}
-
-function AnnouncementCard({ icon, title, category, tone = 'green', posted, editedAt, text, highlight = false }) {
-  const toneStyles = {
-    green: { bar: 'from-eco-400 to-eco-700', tile: 'eco-icon-tile', badge: 'eco-badge-green' },
-    red: { bar: 'from-red-300 to-red-500', tile: 'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-600', badge: 'eco-badge-red' },
-    blue: { bar: 'from-sky-300 to-sky-600', tile: 'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-sky-700', badge: 'eco-badge-blue' },
-  }[tone]
-
-  return (
-    <article className={`eco-card eco-card-hover overflow-hidden py-5 pl-6 pr-5 ${highlight ? 'bg-gradient-to-r from-eco-50/70 to-white' : ''}`}>
-      <span className={`absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b ${toneStyles.bar}`} />
-      <div className="flex items-start gap-4">
-        <span className={toneStyles.tile}>{icon}</span>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-extrabold text-gray-800">{title}</h3>
-            {category && <span className={`eco-badge ${toneStyles.badge}`}>{category}</span>}
-          </div>
-
-          <p className="mt-0.5 text-xs font-medium text-gray-400">
-            {posted}
-            {editedAt && (
-              <span className="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-500" title={new Date(editedAt).toLocaleString()}>
-                Edited · {new Date(editedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </span>
-            )}
-          </p>
-
-          <p className="mt-2.5 whitespace-pre-line text-sm leading-relaxed text-gray-600 [overflow-wrap:anywhere]">{text}</p>
-        </div>
-      </div>
-    </article>
   )
 }
 

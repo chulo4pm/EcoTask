@@ -30,6 +30,7 @@ import {
   UserX,
   X,
   Flag,
+  Megaphone,
   Hourglass,
   RefreshCw,
   FileText,
@@ -40,6 +41,7 @@ import {
   Ban,
 } from 'lucide-react';
 import NotificationBell from "./NotificationBell";
+import AnnouncementsFeed from "./AnnouncementsFeed";
 import { API_BASE_URL } from "./config";
 
 // Sidebar Navigation Items
@@ -49,6 +51,7 @@ const navItems = [
   { label: 'Manage Activities', icon: FolderOpen },
   { label: 'Participation Record', icon: BookOpen },
   { label: 'Reports', icon: Flag },
+  { label: 'Announcements', icon: Megaphone },
 ];
 
 const getOrganizerInfo = () => {
@@ -375,6 +378,7 @@ function OrganizerWorkspace({ account, onLogout }) {
     'Manage Activities': { title: 'Manage Activities', subtitle: 'Edit your activities, view volunteers, and issue certificates.' },
     'Participation Record': { title: 'Participation Record', subtitle: 'Mark attendance for your activities.' },
     Reports: { title: 'Reports', subtitle: 'Reports volunteers submitted about your activities.' },
+    Announcements: { title: 'Announcements', subtitle: 'Updates from the EcoTask admin for organizers.' },
   };
   const todayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 
@@ -459,6 +463,8 @@ function OrganizerWorkspace({ account, onLogout }) {
                 setActiveTab('Manage Activities');
               } else if (item.type === 'activity_hidden' || item.type === 'activity_unhidden') {
                 setActiveTab('Manage Activities');
+              } else if (item.type === 'announcement') {
+                setActiveTab('Announcements');
               } else {
                 setActiveTab('Dashboard');
               }
@@ -512,6 +518,7 @@ function OrganizerWorkspace({ account, onLogout }) {
             )}
             {activeTab === 'Participation Record' && <ParticipationRecordView />}
             {activeTab === 'Reports' && <OrganizerReportsView />}
+            {activeTab === 'Announcements' && <AnnouncementsFeed storageKey="organizerInfo" audience="Organizer" />}
           </div>
         </main>
       </div>
