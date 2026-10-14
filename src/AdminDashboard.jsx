@@ -31,6 +31,7 @@ import {
   EyeOff,
   Lock,
   AlertTriangle,
+  Mail,
 } from 'lucide-react';
 import NotificationBell from "./NotificationBell";
 import { API_BASE_URL } from "./config";
@@ -838,6 +839,7 @@ function OrganizerApprovalsView() {
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="truncate text-base font-extrabold">{organizer.organizationName || '—'}</h3>
                   {statusBadge[organizer.organizerStatus]}
+                  {isUnverified(organizer) && <NotVerifiedBadge user={organizer} />}
                 </div>
                 <p className="text-sm text-slate-600">{organizer.name}</p>
                 <p className="text-xs text-slate-500">{organizer.email} · {organizer.phone || 'no phone'}</p>
@@ -875,9 +877,20 @@ function OrganizerApprovalsView() {
                     <UserX className="h-4 w-4" /> Reject
                   </button>
                 )}
-                <button type="button" onClick={() => setApproveTarget(organizer)} className="eco-btn eco-btn-primary eco-btn-sm">
-                  <UserCheck className="h-4 w-4" /> Approve
-                </button>
+                {isUnverified(organizer) ? (
+                  <button
+                    type="button"
+                    disabled
+                    title="They need to confirm their email before you can approve them."
+                    className="eco-btn eco-btn-muted eco-btn-sm cursor-not-allowed"
+                  >
+                    <Mail className="h-4 w-4" /> Waiting for email verification
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setApproveTarget(organizer)} className="eco-btn eco-btn-primary eco-btn-sm">
+                    <UserCheck className="h-4 w-4" /> Approve
+                  </button>
+                )}
               </div>
             )}
           </article>
@@ -1571,6 +1584,49 @@ const formatShortDate = (value) => (
 );
 
 // One place to decide how an organizer's account status is shown
+// ---------- Email not verified yet ----------
+// Unverified sign-ups are deleted automatically 24h after their last code (server cleanup).
+const isUnverified = (user) => user?.isEmailVerified === false;
+
+const timeUntilDelete = (autoDeleteAt) => {
+  if (!autoDeleteAt) return '';
+  const ms = new Date(autoDeleteAt).getTime() - Date.now();
+  if (ms <= 0) return 'deleting soon';
+  const hours = Math.floor(ms / 3600000);
+  if (hours >= 1) return `deleted in ${hours}h`;
+  return `deleted in ${Math.max(1, Math.ceil(ms / 60000))}m`;
+};
+
+function NotVerifiedBadge({ user, compact = false }) {
+  const left = timeUntilDelete(user.autoDeleteAt);
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5 align-middle">
+      <span
+        className="eco-badge eco-badge-amber"
+        title="This person hasn't confirmed their email yet. Unverified accounts are deleted automatically after 24 hours."
+      >
+        <Mail className="h-3 w-3" /> Not verified
+      </span>
+      {!compact && left && <span className="text-[10px] font-semibold text-amber-700">{left}</span>}
+    </span>
+  );
+}
+
+function NotVerifiedNote({ user }) {
+  const when = user.autoDeleteAt
+    ? new Date(user.autoDeleteAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+  return (
+    <div className="mx-6 mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-xs text-amber-900">
+      <p className="flex items-center gap-1.5 font-bold"><Mail className="h-3.5 w-3.5" /> Email not verified yet</p>
+      <p className="mt-0.5">
+        They signed up but haven't entered the code sent to their email.
+        {when ? ` If they don't verify, this account is deleted automatically on ${when} (${timeUntilDelete(user.autoDeleteAt)}).` : ''}
+      </p>
+    </div>
+  );
+}
+
 const getOrganizerAccountStatus = (organizer) => {
   if (organizer.isSuspended) return { key: 'suspended', label: 'Suspended', badge: 'eco-badge-red' };
   if (organizer.organizerStatus === 'approved') return { key: 'active', label: 'Active', badge: 'eco-badge-green' };
@@ -1615,9 +1671,12 @@ function OrganizerManagementView() {
     return acc;
   }, {});
 
+  const unverifiedCount = organizers.filter(isUnverified).length;
+
   const term = search.trim().toLowerCase();
   const filtered = organizers.filter((o) => {
-    if (filter !== 'all' && getOrganizerAccountStatus(o).key !== filter) return false;
+    if (filter === 'unverified') { if (!isUnverified(o)) return false; }
+    else if (filter !== 'all' && getOrganizerAccountStatus(o).key !== filter) return false;
     if (!term) return true;
     return [o.name, o.email, o.organizationName].some((v) => v?.toLowerCase().includes(term));
   });
@@ -1674,6 +1733,7 @@ function OrganizerManagementView() {
               ['suspended', 'Suspended', counts.suspended || 0],
               ['pending', 'Pending', counts.pending || 0],
               ['rejected', 'Rejected', counts.rejected || 0],
+              ['unverified', 'Not verified', unverifiedCount],
             ].map(([key, label, count]) => (
               <button key={key} type="button" onClick={() => setFilter(key)} className={`eco-chip ${filter === key ? 'eco-chip-active' : ''}`}>
                 {label} <span className="eco-chip-count">{count}</span>
@@ -1722,7 +1782,10 @@ function OrganizerManagementView() {
                     <td className="font-extrabold text-slate-800">{o.activityCount || 0}</td>
                     <td className="text-slate-600">{formatShortDate(o.createdAt)}</td>
                     <td>
-                      <span className={`eco-badge ${status.badge}`} title={o.isSuspended ? o.suspendedReason : undefined}>{status.label}</span>
+                      <div className="flex flex-wrap items-start gap-1.5">
+                        <span className={`eco-badge ${status.badge}`} title={o.isSuspended ? o.suspendedReason : undefined}>{status.label}</span>
+                        {isUnverified(o) && <NotVerifiedBadge user={o} />}
+                      </div>
                     </td>
                     <td className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
@@ -1867,8 +1930,13 @@ function OrganizerDetailsModal({ organizerId, onClose, onSuspend, onReactivate, 
                 {getInitials(orgName)}
               </span>
               <p className="mt-3 text-base font-extrabold">{orgName}</p>
-              <span className={`eco-badge ${status.badge} mt-1.5`}>{status.label}</span>
+              <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                <span className={`eco-badge ${status.badge}`}>{status.label}</span>
+                {isUnverified(details) && <NotVerifiedBadge user={details} compact />}
+              </div>
             </div>
+
+            {isUnverified(details) && <NotVerifiedNote user={details} />}
 
             {details.isSuspended && (
               <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
@@ -2032,8 +2100,15 @@ function VolunteerManagementView() {
   }, []);
 
   const suspendedCount = users.filter((user) => user.isSuspended).length;
+  const unverifiedCount = users.filter((user) => isUnverified(user) && !user.isSuspended).length;
+  const matchesStatus = (user) => {
+    if (statusFilter === 'suspended') return user.isSuspended;
+    if (statusFilter === 'unverified') return isUnverified(user) && !user.isSuspended;
+    if (statusFilter === 'active') return !user.isSuspended && !isUnverified(user);
+    return true;
+  };
   const filteredUsers = users.filter((user) => (
-    (statusFilter === 'all' || (statusFilter === 'suspended' ? user.isSuspended : !user.isSuspended)) &&
+    matchesStatus(user) &&
     (user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase()))
   ));
@@ -2113,7 +2188,8 @@ function VolunteerManagementView() {
           <div className="flex flex-wrap gap-2">
             {[
               ['all', 'All', users.length],
-              ['active', 'Active', users.length - suspendedCount],
+              ['active', 'Active', users.length - suspendedCount - unverifiedCount],
+              ['unverified', 'Not verified', unverifiedCount],
               ['suspended', 'Suspended', suspendedCount],
             ].map(([key, label, count]) => (
               <button key={key} type="button" onClick={() => setStatusFilter(key)} className={`eco-chip ${statusFilter === key ? 'eco-chip-active' : ''}`}>
@@ -2164,6 +2240,8 @@ function VolunteerManagementView() {
                     <td>
                       {user.isSuspended ? (
                         <span className="eco-badge eco-badge-red" title={user.suspendedReason}>Suspended</span>
+                      ) : isUnverified(user) ? (
+                        <NotVerifiedBadge user={user} />
                       ) : (
                         <span className="eco-badge eco-badge-green">
                           <span className="h-1.5 w-1.5 rounded-full bg-eco-500" />
@@ -2202,7 +2280,10 @@ function VolunteerManagementView() {
               ) : (
                 <tr>
                   <td colSpan={6} className="py-10 text-center text-slate-400">
-                    {statusFilter === 'suspended' && !searchTerm ? 'No suspended volunteers.' : 'No users found matching your search.'}
+                    {searchTerm ? 'No users found matching your search.'
+                      : statusFilter === 'suspended' ? 'No suspended volunteers.'
+                      : statusFilter === 'unverified' ? 'Everyone has verified their email.'
+                      : 'No users found matching your search.'}
                   </td>
                 </tr>
               )}
@@ -2230,10 +2311,16 @@ function VolunteerManagementView() {
                 {getInitials(selectedUser.name)}
               </span>
               <p className="mt-3 text-base font-extrabold text-slate-800">{selectedUser.name}</p>
-              <span className={`eco-badge mt-1.5 ${selectedUser.isSuspended ? 'eco-badge-red' : 'eco-badge-green'}`}>
-                {selectedUser.isSuspended ? 'Suspended' : 'Active'}
-              </span>
+              {!selectedUser.isSuspended && isUnverified(selectedUser) ? (
+                <span className="mt-1.5"><NotVerifiedBadge user={selectedUser} compact /></span>
+              ) : (
+                <span className={`eco-badge mt-1.5 ${selectedUser.isSuspended ? 'eco-badge-red' : 'eco-badge-green'}`}>
+                  {selectedUser.isSuspended ? 'Suspended' : 'Active'}
+                </span>
+              )}
             </div>
+
+            {isUnverified(selectedUser) && <NotVerifiedNote user={selectedUser} />}
 
             {selectedUser.isSuspended && (
               <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
