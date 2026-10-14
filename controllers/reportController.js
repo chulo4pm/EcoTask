@@ -65,6 +65,31 @@ exports.getMyReportedActivities = async (req, res) => {
   }
 };
 
+// GET /api/reports/mine/full - the volunteer's reports with status and the admin's reply.
+// Works even when the activity was hidden or deleted. Internal admin notes are not included.
+exports.getMyReports = async (req, res) => {
+  try {
+    const reports = await Report.find({ reporter: req.user._id })
+      .populate('activity', 'title date coverImage isHidden')
+      .sort({ createdAt: -1 });
+    res.json(reports.map((r) => ({
+      _id: r._id,
+      activityId: r.activity?._id || null,
+      activityTitle: r.activity?.title || 'Deleted activity',
+      activityDate: r.activity?.date || null,
+      coverImage: r.activity?.coverImage || null,
+      reason: r.reason,
+      details: r.details,
+      status: r.status,               // open | dismissed | actioned
+      replyToReporter: r.replyToReporter || '',
+      createdAt: r.createdAt,
+      resolvedAt: r.resolvedAt,
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // GET /api/reports?status=open - admin list of reports.
 exports.getReports = async (req, res) => {
   try {
@@ -161,6 +186,7 @@ exports.resolveReport = async (req, res) => {
   try {
     const action = String(req.body.action || '');
     const note = String(req.body.note || '').trim().slice(0, 500);
+    const reply = String(req.body.reply || '').trim().slice(0, 500);
 
     if (!['dismiss', 'hide'].includes(action)) {
       return res.status(400).json({ message: 'Action must be "dismiss" or "hide".' });
@@ -179,7 +205,8 @@ exports.resolveReport = async (req, res) => {
 
     const activity = await Activity.findById(report.activity).select('title organizer');
     const title = activity?.title || 'the activity';
-    const resolvedFields = { resolvedBy: req.user._id, resolvedAt: new Date(), adminNote: note };
+    const resolvedFields = { resolvedBy: req.user._id, resolvedAt: new Date(), adminNote: note, replyToReporter: reply };
+    const withReply = (text) => (reply ? `${text} Admin: "${reply}"` : text);
 
     if (action === 'dismiss') {
       Object.assign(report, { status: 'dismissed', ...resolvedFields });
@@ -188,7 +215,7 @@ exports.resolveReport = async (req, res) => {
         notifyUsers([report.reporter], {
           type: 'report_reviewed',
           title: 'Report reviewed',
-          message: `Thanks for your report on ${title}. The admin reviewed it and decided no action was needed.`,
+          message: withReply(`Thanks for your report on ${title}. The admin reviewed it and decided no action was needed.`),
           activity: report.activity,
         });
       }
@@ -210,7 +237,7 @@ exports.resolveReport = async (req, res) => {
       notifyUsers(openReports.map((r) => r.reporter), {
         type: 'report_reviewed',
         title: 'Report reviewed',
-        message: `Thanks for your report on ${title}. The admin reviewed it and hid the activity.`,
+        message: withReply(`Thanks for your report on ${title}. The admin reviewed it and removed the activity.`),
         activity: report.activity,
       });
     }

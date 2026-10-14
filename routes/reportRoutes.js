@@ -4,6 +4,7 @@ const {
   getReportReasons,
   createReport,
   getMyReportedActivities,
+  getMyReports,
   getReports,
   getReportSummary,
   resolveReport,
@@ -16,6 +17,7 @@ const router = express.Router();
 router.get('/reasons', protect, getReportReasons);
 router.post('/', protect, volunteerOnly, createReport);
 router.get('/mine', protect, volunteerOnly, getMyReportedActivities);
+router.get('/mine/full', protect, volunteerOnly, getMyReports);
 router.get('/organizer', protect, organizerOnly, getOrganizerReports);
 router.get('/summary', protect, adminOnly, getReportSummary);
 router.get('/', protect, adminOnly, getReports);

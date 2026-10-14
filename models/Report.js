@@ -21,6 +21,8 @@ const reportSchema = new mongoose.Schema({
     default: 'open',
   },
   adminNote: { type: String, trim: true, maxlength: 500, default: '' },
+  // Optional message the volunteer who reported sees (My Reports + notification).
+  replyToReporter: { type: String, trim: true, maxlength: 500, default: '' },
   resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   resolvedAt: { type: Date, default: null },
 }, { timestamps: true });
