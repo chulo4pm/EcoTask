@@ -32,6 +32,7 @@ import {
   Lock,
   AlertTriangle,
   Mail,
+  Trees,
 } from 'lucide-react';
 import NotificationBell from "./NotificationBell";
 import { API_BASE_URL } from "./config";
@@ -984,7 +985,7 @@ const isLowSignup = (activity) => {
   return d >= 0 && d <= LOW_SIGNUP_DAYS && limit > 0 && signupCount(activity) / limit < LOW_SIGNUP_RATIO;
 };
 const isHiddenActivity = (activity) => Boolean(activity.isHidden || activity.hiddenBySuspension);
-const needsAttention = (activity) => activity.openReports > 0 || isLowSignup(activity) || !activity.organizer;
+const needsAttention = (activity) => activity.openReports > 0 || isLowSignup(activity);
 
 const HISTORY_DOT = {
   created: 'bg-eco-600', joined: 'bg-eco-400', edited: 'bg-sky-500', assigned: 'bg-sky-500',
@@ -1033,15 +1034,24 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
 
         {activity && (
           <div className="space-y-5 p-5">
-            <div>
-              <div className="flex flex-wrap gap-1.5">
-                <span className={`eco-badge ${status === 'Completed' ? 'eco-badge-gray' : 'eco-badge-green'}`}>{status === 'Ongoing' ? 'Today' : status}</span>
-                {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
-                {activity.hiddenBySuspension && <span className="eco-badge eco-badge-gray">Organizer suspended</span>}
-                {openReports > 0 && <span className="eco-badge eco-badge-amber"><Flag className="h-3 w-3" /> {openReports} open report{openReports === 1 ? '' : 's'}</span>}
+            {/* Photo banner (green placeholder when there's no photo) */}
+            <div className="relative -mx-5 -mt-5 h-48 overflow-hidden bg-gradient-to-br from-eco-700 via-eco-600 to-eco-400">
+              {activity.coverImage ? (
+                <img src={getActivityImageUrl(activity.coverImage)} alt="" className={`h-full w-full object-cover ${status === 'Completed' ? 'grayscale' : ''}`} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-white/40"><Trees className="h-16 w-16" strokeWidth={1.2} /></div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 p-5 text-white">
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={`eco-badge ${status === 'Completed' ? 'eco-badge-gray' : 'eco-badge-green'}`}>{status === 'Ongoing' ? 'Today' : status}</span>
+                  {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
+                  {activity.hiddenBySuspension && <span className="eco-badge eco-badge-gray">Organizer suspended</span>}
+                  {openReports > 0 && <span className="eco-badge eco-badge-amber"><Flag className="h-3 w-3" /> {openReports} open report{openReports === 1 ? '' : 's'}</span>}
+                </div>
+                <h3 className="mt-2 text-xl font-extrabold drop-shadow [overflow-wrap:anywhere]">{activity.title}</h3>
+                <p className="text-xs font-bold text-white/90">{organizerName}{activity.organizer?.email ? ` · ${activity.organizer.email}` : ''}</p>
               </div>
-              <h3 className="mt-2 text-lg font-extrabold [overflow-wrap:anywhere]">{activity.title}</h3>
-              <p className="text-xs font-bold text-eco-700">{organizerName}{activity.organizer?.email ? ` · ${activity.organizer.email}` : ''}</p>
             </div>
 
             {activity.isHidden && activity.hiddenReason && (
@@ -1212,7 +1222,6 @@ function ActivityOversightView() {
       { key: 'all', label: 'All', test: () => true },
       { key: 'reports', label: 'Has open reports', test: (a) => a.openReports > 0, warn: true },
       { key: 'low', label: 'Low sign-ups', test: isLowSignup, warn: true },
-      { key: 'no-organizer', label: 'No organizer', test: (a) => !a.organizer, warn: true },
       { key: 'hidden', label: 'Hidden', test: isHiddenActivity },
     ];
   const tabList = listView === 'past' ? pastActivities : activeActivities;
@@ -1238,9 +1247,9 @@ function ActivityOversightView() {
           type="button"
           onClick={() => { setListView('active'); setQuickFilter('all'); }}
           className={`text-left ${attention.length > 0 ? '[&_.eco-stat]:border-amber-200 [&_.eco-stat]:bg-amber-50/70' : ''}`}
-          title="Open reports, low sign-ups (starts within 3 days, under 25% full) or no organizer"
+          title="Open reports or low sign-ups (starts within 3 days, under 25% full)"
         >
-          <StatTile label="Needs attention" value={attention.length} icon={AlertTriangle} hint="Reports, low sign-ups, no organizer" />
+          <StatTile label="Needs attention" value={attention.length} icon={AlertTriangle} hint="Open reports or low sign-ups" />
         </button>
         <StatTile label="Hidden" value={hiddenCount} icon={EyeOff} hint="By admin or organizer suspension" />
       </div>
@@ -1560,6 +1569,7 @@ function ReportsView() {
   const [suspendTarget, setSuspendTarget] = useState(null);
   const [notifyReporters, setNotifyReporters] = useState(true);
   const [notifyOrganizer, setNotifyOrganizer] = useState(true);
+  const [reply, setReply] = useState('');
 
   const loadSummary = () => adminFetch('/api/reports/summary').then(setSummary).catch(() => {});
   useEffect(() => { loadSummary(); }, []);
@@ -1616,10 +1626,11 @@ function ReportsView() {
   const patchReport = (id, type, note) =>
     adminFetch(`/api/reports/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ action: type, note, notifyReporters, notifyOrganizer }),
+      body: JSON.stringify({ action: type, note, reply: reply.trim(), notifyReporters, notifyOrganizer }),
     });
 
   const openAction = (next) => {
+    setReply('');
     setNotifyReporters(true);
     setNotifyOrganizer(true);
     setAction(next);
@@ -1674,14 +1685,14 @@ function ReportsView() {
     'dismiss-all': {
       title: 'Dismiss all open reports?',
       description: 'The activity stays visible. Every open report on this activity will be marked as dismissed.',
-      label: 'Note',
+      label: 'Internal note (only admins see this)',
       placeholder: 'e.g. Checked with the organizer; details are correct.',
       confirmLabel: 'Dismiss all',
     },
     dismiss: {
       title: 'Dismiss this report?',
       description: 'The activity stays visible. Use this when the report is not valid.',
-      label: 'Note',
+      label: 'Internal note (only admins see this)',
       placeholder: 'e.g. Checked with the organizer; details are correct.',
       confirmLabel: 'Dismiss report',
     },
@@ -1837,6 +1848,7 @@ function ReportsView() {
                               <p className="mt-2 rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
                                 Resolved by {report.resolvedBy?.name || 'admin'} on {new Date(report.resolvedAt).toLocaleDateString()}
                                 {report.adminNote && <> · <span className="font-semibold">Note:</span> {report.adminNote}</>}
+                                {report.replyToReporter && <><br /><span className="font-semibold">Reply to reporter:</span> {report.replyToReporter}</>}
                               </p>
                             )}
                           </div>
@@ -1897,6 +1909,20 @@ function ReportsView() {
             onConfirm={resolve}
             onClose={() => setAction(null)}
           >
+            <div className="mt-1">
+              <label className="eco-label">Message to the {reporterCount === 1 ? 'reporter' : 'reporters'} (optional)</label>
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder={action.type === 'hide'
+                  ? 'e.g. Thank you! The details were misleading, so we removed the activity.'
+                  : 'e.g. Thanks for flagging this! We checked and the details are correct.'}
+                className="eco-input resize-y"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Shown in the volunteer's My Reports page and in their notification.</p>
+            </div>
             <div className="mt-3 space-y-2 rounded-xl border border-eco-100 bg-eco-50/50 px-3.5 py-3 text-xs text-slate-700">
               <label className="flex cursor-pointer items-start gap-2">
                 <input type="checkbox" checked={notifyReporters} onChange={(e) => setNotifyReporters(e.target.checked)} className="mt-0.5 accent-eco-600" />

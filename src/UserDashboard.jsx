@@ -263,7 +263,7 @@ export default function App({ onLogout }) {
           activity_updated: { type: 'SCHEDULE', actionText: 'View schedule' },
           activity_cancelled: { type: 'SCHEDULE', actionText: 'View schedule' },
           attendance_marked: { type: 'RECORD', actionText: 'View record' },
-          report_reviewed: { type: 'ACTIVITY', actionText: 'View activities' },
+          report_reviewed: { type: 'REPORTS', actionText: 'View my report' },
         }
         const serverNotifications = (serverData?.notifications || [])
           .filter((item) => new Date(item.createdAt).getTime() > clearedAt.current)
@@ -358,6 +358,8 @@ export default function App({ onLogout }) {
       setActivePage('activities')
     } else if (notif.type === 'RECORD') {
       setActivePage('records')
+    } else if (notif.type === 'REPORTS') {
+      setActivePage('myreports')
     } else {
       setActivePage('schedule')
     }
@@ -387,6 +389,7 @@ export default function App({ onLogout }) {
     { key: 'schedule', label: 'My Schedule', icon: Calendar },
     { key: 'records', label: 'Participation Record', icon: Award },
     { key: 'announcement', label: 'Announcement', icon: Megaphone },
+    { key: 'myreports', label: 'My Reports', icon: Flag },
   ]
   const pageTitles = {
     dashboard: 'Dashboard',
@@ -394,6 +397,7 @@ export default function App({ onLogout }) {
     schedule: 'My Schedule',
     records: 'Participation Record',
     announcement: 'Announcement',
+    myreports: 'My Reports',
     settings: 'Settings',
   }
   const newCount = notifications.filter((n) => n.isNew).length
@@ -654,6 +658,7 @@ export default function App({ onLogout }) {
         <main key={activePage} className="ecotask-page-scroll ecotask-page-enter eco-scroll flex-1 overflow-y-auto">
           {activePage === 'dashboard' && <Dashboard goTo={goTo} displayName={displayName} />}
           {activePage === 'activities' && <Activities goTo={goTo} />}
+          {activePage === 'myreports' && <MyReports goTo={goTo} />}
           {activePage === 'schedule' && (
             <Schedule
               goTo={goTo}
@@ -691,6 +696,138 @@ function SidebarItem({ active, icon, children, onClick }) {
 /* =========================================================
    PAGE HEADER (shared)
 ========================================================= */
+
+/* =========================================================
+   MY REPORTS
+   Activities the volunteer reported, with the admin's decision
+   and reply. Works even if the activity was removed.
+========================================================= */
+
+const REPORT_STATUS = {
+  open: { label: 'Under review', badge: 'eco-badge-amber' },
+  dismissed: { label: 'No action needed', badge: 'eco-badge-gray' },
+  actioned: { label: 'Activity removed', badge: 'eco-badge-red' },
+}
+
+const shortDate = (value) => (value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '')
+
+function MyReports({ goTo }) {
+  const [reports, setReports] = useState([])
+  const [filter, setFilter] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
+        const response = await fetch(`${API_BASE_URL}/api/reports/mine/full`, {
+          headers: { Authorization: `Bearer ${userInfo.token}` },
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.message || 'Unable to load your reports')
+        setReports(Array.isArray(data) ? data : [])
+      } catch (requestError) {
+        setError(requestError.message === 'Failed to fetch' ? "Can't reach the server. Please try again." : requestError.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
+
+  const openCount = reports.filter((r) => r.status === 'open').length
+  const visible = reports.filter((r) => (
+    filter === 'all' || (filter === 'open' ? r.status === 'open' : r.status !== 'open')
+  ))
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-[1100px] p-5 lg:p-8">
+        <div className="mb-7 h-10 w-56 animate-pulse rounded-xl bg-eco-100" />
+        <div className="space-y-3">{[0, 1].map((i) => <div key={i} className="eco-card h-28 animate-pulse bg-white/70" />)}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-auto max-w-[1100px] p-5 lg:p-8">
+      <PageHeader title="My Reports" subtitle="Activities you flagged and what the admin decided.">
+        {[
+          { key: 'all', label: 'All', count: reports.length },
+          { key: 'open', label: 'Under review', count: openCount },
+          { key: 'reviewed', label: 'Reviewed', count: reports.length - openCount },
+        ].map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => setFilter(chip.key)}
+            className={`eco-chip ${filter === chip.key ? 'eco-chip-active' : ''}`}
+          >
+            {chip.label}
+            <span className="eco-chip-count">{chip.count}</span>
+          </button>
+        ))}
+      </PageHeader>
+
+      {error && <div className="eco-empty mb-4 border-red-200 bg-red-50 text-red-700">{error}</div>}
+
+      {!error && visible.length === 0 && (
+        <div className="eco-empty py-12">
+          <Flag size={24} className="text-eco-400" />
+          {reports.length === 0
+            ? <>You haven't reported any activity. If something looks wrong, open the activity and tap "Report this activity".</>
+            : 'No reports in this list.'}
+          {reports.length === 0 && goTo && (
+            <button type="button" onClick={() => goTo('activities')} className="eco-btn eco-btn-primary eco-btn-sm mt-3">Browse activities</button>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {visible.map((report) => {
+          const meta = REPORT_STATUS[report.status] || REPORT_STATUS.open
+          const image = getActivityImageUrl(report.coverImage) || volunteerImage
+          const removed = report.status === 'actioned'
+          return (
+            <article key={report._id} className="eco-card flex gap-4 p-4 sm:p-5">
+              <img
+                src={image}
+                alt=""
+                className={`h-16 w-16 shrink-0 rounded-xl object-cover sm:h-20 sm:w-20 ${removed ? 'grayscale' : ''}`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <h3 className="text-[15px] font-extrabold text-gray-800 [overflow-wrap:anywhere]">{report.activityTitle}</h3>
+                  <span className={`eco-badge shrink-0 ${meta.badge}`}>{report.status === 'open' && <Clock size={11} />} {meta.label}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Reported {shortDate(report.createdAt)} · {report.reason}
+                  {report.resolvedAt && ` · Reviewed ${shortDate(report.resolvedAt)}`}
+                </p>
+                {report.details && (
+                  <p className="mt-2 text-xs text-gray-700 [overflow-wrap:anywhere]">Your note: "{report.details}"</p>
+                )}
+                {report.status === 'open' ? (
+                  <p className="mt-2 text-xs text-gray-500">The admin will review this soon. You'll get a notification when they do.</p>
+                ) : report.replyToReporter ? (
+                  <div className={`mt-2.5 rounded-xl border px-3.5 py-2.5 text-xs [overflow-wrap:anywhere] ${removed ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-eco-200 bg-eco-50 text-eco-900'}`}>
+                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">Admin's reply</p>
+                    <p className="mt-0.5">{report.replyToReporter}</p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-500">
+                    {removed ? 'The admin reviewed your report and removed the activity.' : 'The admin reviewed your report and decided no action was needed.'}
+                  </p>
+                )}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function PageHeader({ title, subtitle, children }) {
   return (
@@ -975,6 +1112,8 @@ function Activities({ goTo }) {
   const [cancelActivity, setCancelActivity] = useState(null)
   const [reportActivity, setReportActivity] = useState(null)
   const [reportedIds, setReportedIds] = useState([])
+  // My report per activity id: { status, replyToReporter }
+  const [myReports, setMyReports] = useState({})
   const [pageNotice, setPageNotice] = useState('')
   const [registeredActivities, setRegisteredActivities] = useState([])
   const [activityFilter, setActivityFilter] = useState('All')
@@ -1106,11 +1245,15 @@ function Activities({ goTo }) {
         }))
 
         setActivities(sortActivitiesByStatus(normalizedActivities))
-        fetch(`${API_BASE_URL}/api/reports/mine`, {
+        fetch(`${API_BASE_URL}/api/reports/mine/full`, {
           headers: { Authorization: `Bearer ${userInfo.token}` },
         })
           .then((reportResponse) => (reportResponse.ok ? reportResponse.json() : []))
-          .then((ids) => setReportedIds(Array.isArray(ids) ? ids : []))
+          .then((list) => {
+            if (!Array.isArray(list)) return
+            setReportedIds(list.filter((r) => r.activityId).map((r) => String(r.activityId)))
+            setMyReports(Object.fromEntries(list.filter((r) => r.activityId).map((r) => [String(r.activityId), r])))
+          })
           .catch(() => {})
 
         setRegisteredActivities(
@@ -1432,11 +1575,30 @@ function Activities({ goTo }) {
               </p>
 
               <div className="mt-4 flex justify-start">
-                {reportedIds.includes(String(selectedActivity.id)) ? (
-                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400">
-                    <Flag size={12} /> You reported this activity
-                  </span>
-                ) : (
+                {reportedIds.includes(String(selectedActivity.id)) ? (() => {
+                  const mine = myReports[String(selectedActivity.id)] || { status: 'open' }
+                  const meta = REPORT_STATUS[mine.status] || REPORT_STATUS.open
+                  return (
+                    <div className={`w-full rounded-xl border px-3.5 py-2.5 text-left text-xs ${mine.status === 'open' ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 font-bold text-gray-700"><Flag size={12} /> You reported this activity</span>
+                        <span className={`eco-badge ${meta.badge}`}>{meta.label}</span>
+                      </div>
+                      <p className={`mt-1 [overflow-wrap:anywhere] ${mine.status === 'open' ? 'text-amber-900' : 'text-gray-600'}`}>
+                        {mine.status === 'open'
+                          ? "The admin hasn't reviewed it yet. "
+                          : mine.replyToReporter
+                            ? `Admin: "${mine.replyToReporter.length > 90 ? `${mine.replyToReporter.slice(0, 90)}…` : mine.replyToReporter}" `
+                            : 'The admin reviewed it. '}
+                        {goTo && (
+                          <button type="button" onClick={() => { setSelectedActivity(null); goTo('myreports') }} className="font-bold text-eco-700 hover:underline">
+                            See My Reports →
+                          </button>
+                        )}
+                      </p>
+                    </div>
+                  )
+                })() : (
                   <button
                     type="button"
                     onClick={() => {
@@ -1494,6 +1656,7 @@ function Activities({ goTo }) {
           onClose={() => setReportActivity(null)}
           onReported={(message) => {
             setReportedIds((current) => [...current, String(reportActivity.id)])
+            setMyReports((current) => ({ ...current, [String(reportActivity.id)]: { status: 'open', replyToReporter: '' } }))
             setReportActivity(null)
             setPageNotice(message)
             window.setTimeout(() => setPageNotice(''), 5000)
