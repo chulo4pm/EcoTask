@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validateProfileUpdate, sendValidationErrors } = require('../utils/validators');
 
+const { verificationInfo } = require('../utils/cleanupUnverified');
+
 const toSafeUser = (user, activities = 0) => ({
   _id: user._id,
   name: user.name,
@@ -16,6 +18,7 @@ const toSafeUser = (user, activities = 0) => ({
   isSuspended: !!user.isSuspended,
   suspendedReason: user.suspendedReason || '',
   suspendedAt: user.suspendedAt || null,
+  ...verificationInfo(user),
   createdAt: user.createdAt,
 });
 

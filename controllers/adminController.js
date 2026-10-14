@@ -11,6 +11,8 @@ const { BUCKETS, findFile, openDownloadStream, deleteFile } = require('../utils/
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(String(id));
 
+const { verificationInfo } = require('../utils/cleanupUnverified');
+
 const toOrganizerSummary = (user, activityCount = 0) => ({
   _id: user._id,
   name: user.name,
@@ -23,6 +25,7 @@ const toOrganizerSummary = (user, activityCount = 0) => ({
   isSuspended: !!user.isSuspended,
   suspendedReason: user.suspendedReason || '',
   suspendedAt: user.suspendedAt || null,
+  ...verificationInfo(user),
   createdAt: user.createdAt,
   activityCount,
   documents: (user.organizerDocuments || []).map((doc) => ({
@@ -91,6 +94,11 @@ exports.approveOrganizer = async (req, res) => {
   try {
     const organizer = await User.findOne({ _id: req.params.id, role: 'organizer' });
     if (!organizer) return res.status(404).json({ message: 'Organizer not found' });
+    if (organizer.isEmailVerified === false) {
+      return res.status(400).json({
+        message: "This organizer hasn't verified their email yet. You can approve them once they confirm it.",
+      });
+    }
 
     organizer.organizerStatus = 'approved';
     organizer.rejectionReason = '';

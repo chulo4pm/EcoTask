@@ -50,4 +50,16 @@ const startUnverifiedCleanup = () => {
   timer.unref(); // never keeps the process alive on its own
 };
 
-module.exports = { startUnverifiedCleanup, cleanupUnverifiedAccounts };
+// For the admin lists: is the email confirmed, and when will the cleanup remove it if not?
+// Older accounts saved before email verification existed count as verified.
+const verificationInfo = (user) => {
+  const isEmailVerified = user.isEmailVerified !== false;
+  if (isEmailVerified) return { isEmailVerified, autoDeleteAt: null };
+  const since = new Date(user.emailVerificationSentAt || user.createdAt || Date.now());
+  return {
+    isEmailVerified,
+    autoDeleteAt: new Date(since.getTime() + MAX_AGE_HOURS * 60 * 60 * 1000),
+  };
+};
+
+module.exports = { startUnverifiedCleanup, cleanupUnverifiedAccounts, verificationInfo, MAX_AGE_HOURS };
