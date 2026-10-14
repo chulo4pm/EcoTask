@@ -457,6 +457,8 @@ function OrganizerWorkspace({ account, onLogout }) {
                 setActivityFilter('All');
                 setOpenVolunteersFor(item.activity || null);
                 setActiveTab('Manage Activities');
+              } else if (item.type === 'activity_hidden' || item.type === 'activity_unhidden') {
+                setActiveTab('Manage Activities');
               } else {
                 setActiveTab('Dashboard');
               }

@@ -668,7 +668,7 @@ function DashboardView({ goTo }) {
 /* ==========================================
    SHARED: REASON / CONFIRM MODAL
    ========================================== */
-function ReasonModal({ title, description, label, placeholder, confirmLabel, danger = false, required = false, onConfirm, onClose }) {
+function ReasonModal({ title, description, label, placeholder, confirmLabel, danger = false, required = false, onConfirm, onClose, children }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -708,6 +708,7 @@ function ReasonModal({ title, description, label, placeholder, confirmLabel, dan
             <p className="mt-1 text-right text-[11px] text-slate-400">{text.length}/500</p>
           </div>
         )}
+        {children}
         {error && <p className="mt-2 text-xs font-semibold text-rose-600">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="eco-btn eco-btn-secondary">Cancel</button>
@@ -954,12 +955,195 @@ function OrganizerApprovalsView() {
 /* ==========================================
    ACTIVITY OVERSIGHT VIEW
    ========================================== */
+/* ==========================================
+   ACTIVITY OVERSIGHT HELPERS
+   ========================================== */
+const LOW_SIGNUP_DAYS = 3;      // starts within this many days...
+const LOW_SIGNUP_RATIO = 0.25;  // ...and less than this share of spots filled
+
+const daysUntil = (dateValue) => {
+  const day = new Date(`${getDateKey(dateValue)}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((day - today) / 86400000);
+};
+
+const whenLabel = (activity) => {
+  const date = new Date(activity.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const d = daysUntil(activity.date);
+  if (d === 0) return `Today${activity.time ? ` · ${activity.time}` : ''}`;
+  if (d === 1) return `${date} · tomorrow`;
+  if (d > 1) return `${date} · in ${d} days`;
+  return `${date} · Completed`;
+};
+
+const signupCount = (activity) => activity.participantCount ?? activity.participants?.length ?? 0;
+const isLowSignup = (activity) => {
+  const d = daysUntil(activity.date);
+  const limit = Number(activity.volunteerLimit) || 0;
+  return d >= 0 && d <= LOW_SIGNUP_DAYS && limit > 0 && signupCount(activity) / limit < LOW_SIGNUP_RATIO;
+};
+const isHiddenActivity = (activity) => Boolean(activity.isHidden || activity.hiddenBySuspension);
+const needsAttention = (activity) => activity.openReports > 0 || isLowSignup(activity) || !activity.organizer;
+
+const HISTORY_DOT = {
+  created: 'bg-eco-600', joined: 'bg-eco-400', edited: 'bg-sky-500', assigned: 'bg-sky-500',
+  left: 'bg-slate-400', report: 'bg-amber-500', 'report-dismissed': 'bg-slate-400',
+  hidden: 'bg-rose-500', unhidden: 'bg-eco-600', finalized: 'bg-eco-700',
+};
+
+// Side panel opened with "View": details, sign-ups, attendance, reports and history.
+function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnhide }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setError('');
+    adminFetch(`/api/admin/activities/${activityId}/details`)
+      .then((result) => { if (!cancelled) setData(result); })
+      .catch((requestError) => { if (!cancelled) setError(requestError.message); });
+    return () => { cancelled = true; };
+  }, [activityId, refreshKey]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const activity = data?.activity;
+  const status = activity ? getActivityStatus(activity.date) : '';
+  const organizerName = activity?.organizer ? (activity.organizer.organizationName || activity.organizer.name) : 'No organizer';
+  const openReports = (data?.reports || []).filter((r) => r.status === 'open').length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end text-slate-800" role="dialog" aria-modal="true" aria-label="Activity details">
+      <div className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
+      <aside className="eco-scroll relative z-10 h-full w-full max-w-[420px] overflow-y-auto bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-eco-100 bg-white/95 px-5 py-3 backdrop-blur">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Activity details</p>
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {!data && !error && <div className="m-5 h-72 animate-pulse rounded-2xl bg-eco-50" />}
+        {error && <p className="m-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p>}
+
+        {activity && (
+          <div className="space-y-5 p-5">
+            <div>
+              <div className="flex flex-wrap gap-1.5">
+                <span className={`eco-badge ${status === 'Completed' ? 'eco-badge-gray' : 'eco-badge-green'}`}>{status === 'Ongoing' ? 'Today' : status}</span>
+                {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
+                {activity.hiddenBySuspension && <span className="eco-badge eco-badge-gray">Organizer suspended</span>}
+                {openReports > 0 && <span className="eco-badge eco-badge-amber"><Flag className="h-3 w-3" /> {openReports} open report{openReports === 1 ? '' : 's'}</span>}
+              </div>
+              <h3 className="mt-2 text-lg font-extrabold [overflow-wrap:anywhere]">{activity.title}</h3>
+              <p className="text-xs font-bold text-eco-700">{organizerName}{activity.organizer?.email ? ` · ${activity.organizer.email}` : ''}</p>
+            </div>
+
+            {activity.isHidden && activity.hiddenReason && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+                <p className="font-bold">Hidden from volunteers</p>
+                <p className="mt-0.5 [overflow-wrap:anywhere]">{activity.hiddenReason}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {[
+                { label: 'When', value: `${new Date(activity.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}${activity.time ? ` · ${activity.time}` : ''}` },
+                { label: 'Where', value: activity.location || '—' },
+                { label: 'Meeting place', value: activity.meetingPlace || '—' },
+                { label: 'Sign-ups', value: `${activity.participantCount} of ${activity.volunteerLimit}` },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-xl border border-eco-100 bg-eco-50/50 px-3 py-2">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+                  <span className="mt-0.5 block font-semibold text-slate-700 [overflow-wrap:anywhere]">{value}</span>
+                </div>
+              ))}
+            </div>
+
+            {activity.description && (
+              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-600 [overflow-wrap:anywhere]">{activity.description}</p>
+            )}
+
+            {(status !== 'Upcoming' || data.attendance.present + data.attendance.absent > 0) && (
+              <section>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Attendance</p>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="eco-badge eco-badge-green">{data.attendance.present} present</span>
+                  <span className="eco-badge eco-badge-gray">{data.attendance.absent} absent</span>
+                  {data.attendance.unmarked > 0 && <span className="eco-badge eco-badge-amber">{data.attendance.unmarked} not marked</span>}
+                  <span className={`ml-auto text-[11px] font-bold ${activity.attendanceFinalized ? 'text-eco-700' : 'text-amber-700'}`}>
+                    {activity.attendanceFinalized ? 'Finalized' : 'Not finalized'}
+                  </span>
+                </div>
+              </section>
+            )}
+
+            {data.reports.length > 0 && (
+              <section>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Reports ({data.reports.length})</p>
+                <ul className="space-y-1.5">
+                  {data.reports.slice(0, 5).map((r) => (
+                    <li key={r._id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-slate-700">{r.reason}</span>
+                        <span className={`eco-badge ${r.status === 'open' ? 'eco-badge-amber' : r.status === 'actioned' ? 'eco-badge-red' : 'eco-badge-gray'}`}>
+                          {r.status === 'open' ? 'Open' : r.status === 'actioned' ? 'Activity hidden' : 'Dismissed'}
+                        </span>
+                      </div>
+                      {r.details && <p className="mt-0.5 text-slate-600 [overflow-wrap:anywhere]">"{r.details}"</p>}
+                      <p className="mt-0.5 text-[10px] text-slate-400">{r.reporter} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">History</p>
+              <ol className="ml-1.5 space-y-2.5 border-l-2 border-eco-100 pl-4">
+                {data.history.map((item, i) => (
+                  <li key={i} className="relative text-xs text-slate-700">
+                    <span className={`absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white ${HISTORY_DOT[item.kind] || 'bg-slate-400'}`} />
+                    <span className="[overflow-wrap:anywhere]">{item.text}</span>
+                    <span className="block text-[10px] text-slate-400">
+                      {new Date(item.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </div>
+        )}
+
+        {activity && (
+          <div className="sticky bottom-0 flex justify-end gap-2 border-t border-eco-100 bg-white px-5 py-3">
+            {activity.isHidden ? (
+              <button type="button" onClick={() => onUnhide(activity)} className="eco-btn eco-btn-secondary eco-btn-sm">Unhide</button>
+            ) : (
+              <button type="button" onClick={() => onHide(activity)} className="eco-btn eco-btn-danger-soft eco-btn-sm">Hide</button>
+            )}
+            <button type="button" onClick={onClose} className="eco-btn eco-btn-primary eco-btn-sm">Close</button>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
 function ActivityOversightView() {
   const [activities, setActivities] = useState([]);
   const [organizers, setOrganizers] = useState([]);
   const [assignChoice, setAssignChoice] = useState({});
   const [search, setSearch] = useState('');
   const [listView, setListView] = useState('active');
+  const [quickFilter, setQuickFilter] = useState('all');
+  const [panelId, setPanelId] = useState(null);
+  const [panelRefresh, setPanelRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -995,6 +1179,7 @@ function ActivityOversightView() {
     replaceActivity(data.activity);
     setNotice(data.message);
     setHideTarget(null);
+    setPanelRefresh((n) => n + 1);
   };
 
   const assign = async (activity) => {
@@ -1014,17 +1199,51 @@ function ActivityOversightView() {
   const isPast = (a) => getActivityStatus(a.date) === 'Completed';
   const activeActivities = sortActivitiesByStatus(activities.filter((a) => !isPast(a)));
   const pastActivities = sortActivitiesByStatus(activities.filter(isPast)).reverse();
-  const filtered = (listView === 'past' ? pastActivities : activeActivities).filter((a) => (
+
+  // Quick filters ("needs attention" on Active, attendance on Past).
+  const QUICK = listView === 'past'
+    ? [
+      { key: 'all', label: 'All', test: () => true },
+      { key: 'not-finalized', label: 'Attendance not finalized', test: (a) => !a.attendanceFinalized && (a.attendance?.total || 0) > 0, warn: true },
+      { key: 'reports', label: 'Has open reports', test: (a) => a.openReports > 0, warn: true },
+      { key: 'hidden', label: 'Hidden', test: isHiddenActivity },
+    ]
+    : [
+      { key: 'all', label: 'All', test: () => true },
+      { key: 'reports', label: 'Has open reports', test: (a) => a.openReports > 0, warn: true },
+      { key: 'low', label: 'Low sign-ups', test: isLowSignup, warn: true },
+      { key: 'no-organizer', label: 'No organizer', test: (a) => !a.organizer, warn: true },
+      { key: 'hidden', label: 'Hidden', test: isHiddenActivity },
+    ];
+  const tabList = listView === 'past' ? pastActivities : activeActivities;
+  const quick = QUICK.find((q) => q.key === quickFilter) || QUICK[0];
+  const filtered = tabList.filter(quick.test).filter((a) => (
     `${a.title} ${a.location} ${a.organizer?.organizationName || ''}`.toLowerCase().includes(search.toLowerCase())
   ));
+
+  // Summary tiles
+  const upcoming = activeActivities.filter((a) => getActivityStatus(a.date) === 'Upcoming');
+  const today = activeActivities.filter((a) => getActivityStatus(a.date) === 'Ongoing');
+  const attention = activeActivities.filter(needsAttention);
+  const hiddenCount = activities.filter(isHiddenActivity).length;
 
   if (loading) return <div className="eco-card mx-auto h-80 max-w-6xl animate-pulse bg-white/70" />;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 text-slate-800">
-      <p className="text-sm text-slate-600">
-        Organizers create and manage activities. Here you can hide an activity from volunteers, or assign an older activity to an approved organizer.
-      </p>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile label="Upcoming" value={upcoming.length} icon={Calendar} hint={upcoming[0] ? `Next: ${upcoming[0].title}, ${new Date(upcoming[0].date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'Nothing scheduled'} />
+        <StatTile label="Happening today" value={today.length} icon={Activity} hint={today[0] ? `${today[0].title}${today[0].time ? ` · ${today[0].time}` : ''}` : 'No activity today'} />
+        <button
+          type="button"
+          onClick={() => { setListView('active'); setQuickFilter('all'); }}
+          className={`text-left ${attention.length > 0 ? '[&_.eco-stat]:border-amber-200 [&_.eco-stat]:bg-amber-50/70' : ''}`}
+          title="Open reports, low sign-ups (starts within 3 days, under 25% full) or no organizer"
+        >
+          <StatTile label="Needs attention" value={attention.length} icon={AlertTriangle} hint="Reports, low sign-ups, no organizer" />
+        </button>
+        <StatTile label="Hidden" value={hiddenCount} icon={EyeOff} hint="By admin or organizer suspension" />
+      </div>
 
       {notice && <div className="rounded-xl border border-eco-200 bg-eco-50 px-4 py-3 text-sm font-semibold text-eco-800">{notice}</div>}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</div>}
@@ -1041,7 +1260,7 @@ function ActivityOversightView() {
                 type="button"
                 role="tab"
                 aria-selected={listView === tab.key}
-                onClick={() => setListView(tab.key)}
+                onClick={() => { setListView(tab.key); setQuickFilter('all'); }}
                 className={`flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-extrabold transition ${
                   listView === tab.key
                     ? tab.key === 'past' ? 'bg-slate-600 text-white shadow-sm' : 'bg-white text-eco-800 shadow-sm'
@@ -1061,24 +1280,47 @@ function ActivityOversightView() {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 border-b border-eco-100 px-4 py-3">
+          {QUICK.map((q) => {
+            const count = tabList.filter(q.test).length;
+            return (
+              <button
+                key={q.key}
+                type="button"
+                onClick={() => setQuickFilter(q.key)}
+                className={`eco-chip ${quickFilter === q.key ? 'eco-chip-active' : q.warn && count > 0 ? '!border-amber-200 !bg-amber-50 !text-amber-800' : ''}`}
+              >
+                {q.key === 'reports' && <Flag className="h-3 w-3" />}
+                {q.label} <span className="eco-chip-count">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="eco-scroll overflow-x-auto p-3">
-          <table className="eco-table min-w-[860px]">
+          <table className="eco-table min-w-[900px]">
             <thead>
               <tr>
                 <th>Activity</th>
                 <th>Organizer</th>
-                <th>Volunteers</th>
-                <th>Reports</th>
-                <th>Visibility</th>
+                <th>Sign-ups</th>
+                <th>Flags</th>
+                {listView === 'past' && <th>Attendance</th>}
                 <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((activity) => (
-                <tr key={activity._id}>
-                  <td>
+              {filtered.map((activity) => {
+                const joined = signupCount(activity);
+                const limit = Number(activity.volunteerLimit) || 0;
+                const fill = limit > 0 ? Math.min(100, Math.round((joined / limit) * 100)) : 0;
+                const low = listView === 'active' && isLowSignup(activity);
+                const attentionRow = listView === 'active' && needsAttention(activity);
+                return (
+                <tr key={activity._id} className={getActivityStatus(activity.date) === 'Ongoing' ? 'bg-eco-50/50' : ''}>
+                  <td className={attentionRow ? 'shadow-[inset_3px_0_0_#f59e0b]' : ''}>
                     <p className="font-bold text-slate-800">{activity.title}</p>
-                    <p className="text-xs text-slate-500">{new Date(activity.date).toLocaleDateString()} · {getActivityStatus(activity.date)}</p>
+                    <p className="text-xs text-slate-500">{whenLabel(activity)}</p>
                   </td>
                   <td>
                     {activity.organizer ? (
@@ -1097,16 +1339,38 @@ function ActivityOversightView() {
                       </div>
                     )}
                   </td>
-                  <td className="font-semibold">{activity.participants?.length || 0}/{activity.volunteerLimit}</td>
-                  <td>{activity.openReports > 0 ? <span className="eco-badge eco-badge-amber">{activity.openReports} open</span> : <span className="text-xs text-slate-400">None</span>}</td>
                   <td>
-                    {activity.isHidden
-                      ? <span className="eco-badge eco-badge-red" title={activity.hiddenReason}>Hidden</span>
-                      : activity.hiddenBySuspension
-                        ? <span className="eco-badge eco-badge-gray" title="The organizer's account is suspended">Organizer suspended</span>
-                        : <span className="eco-badge eco-badge-green">Visible</span>}
+                    <p className="text-sm font-semibold">{joined}/{limit || '—'}</p>
+                    <div className="mt-1 h-1.5 w-28 overflow-hidden rounded-full bg-eco-100">
+                      <span className={`block h-full rounded-full ${low ? 'bg-amber-500' : 'bg-eco-600'}`} style={{ width: `${fill}%` }} />
+                    </div>
                   </td>
-                  <td className="text-right">
+                  <td>
+                    <div className="flex max-w-[220px] flex-wrap gap-1">
+                      {activity.openReports > 0 && (
+                        <span className="eco-badge eco-badge-amber"><Flag className="h-3 w-3" /> {activity.openReports} open report{activity.openReports === 1 ? '' : 's'}</span>
+                      )}
+                      {low && <span className="eco-badge eco-badge-amber">Low sign-ups</span>}
+                      {activity.isHidden
+                        ? <span className="eco-badge eco-badge-red" title={activity.hiddenReason}>Hidden</span>
+                        : activity.hiddenBySuspension
+                          ? <span className="eco-badge eco-badge-gray" title="The organizer's account is suspended">Organizer suspended</span>
+                          : <span className="eco-badge eco-badge-green">Visible</span>}
+                    </div>
+                  </td>
+                  {listView === 'past' && (
+                    <td>
+                      {activity.attendanceFinalized ? (
+                        <span className="eco-badge eco-badge-green">Finalized · {activity.attendance?.present || 0}/{activity.attendance?.total || 0} present</span>
+                      ) : (activity.attendance?.total || 0) === 0 ? (
+                        <span className="text-xs text-slate-400">No volunteers</span>
+                      ) : (
+                        <span className="eco-badge eco-badge-amber">Not finalized{activity.attendance?.unmarked ? ` · ${activity.attendance.unmarked} not marked` : ''}</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="whitespace-nowrap text-right">
+                    <button type="button" onClick={() => setPanelId(activity._id)} className="eco-btn eco-btn-secondary eco-btn-sm mr-1.5">View</button>
                     {activity.isHidden ? (
                       <button type="button" onClick={() => setVisibility(activity, false).catch((e) => setError(e.message))} className="eco-btn eco-btn-secondary eco-btn-sm">Unhide</button>
                     ) : (
@@ -1114,14 +1378,30 @@ function ActivityOversightView() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="py-10 text-center text-slate-400">{search ? 'No activities found.' : listView === 'past' ? 'No past events yet.' : 'No active activities.'}</td></tr>
+                <tr><td colSpan={listView === 'past' ? 6 : 5} className="py-10 text-center text-slate-400">
+                  {search ? 'No activities found.'
+                    : quickFilter !== 'all' ? 'Nothing here. All clear!'
+                    : listView === 'past' ? 'No past events yet.' : 'No active activities.'}
+                </td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Panel first so the Hide card opens on top of it */}
+      {panelId && (
+        <ActivityOversightPanel
+          activityId={panelId}
+          refreshKey={panelRefresh}
+          onClose={() => setPanelId(null)}
+          onHide={(activity) => setHideTarget(activities.find((a) => a._id === activity._id) || activity)}
+          onUnhide={(activity) => setVisibility(activities.find((a) => a._id === activity._id) || activity, false).catch((e) => setError(e.message))}
+        />
+      )}
 
       {hideTarget && (
         <ReasonModal
@@ -1136,6 +1416,7 @@ function ActivityOversightView() {
           onClose={() => setHideTarget(null)}
         />
       )}
+
     </div>
   );
 }
@@ -1258,6 +1539,9 @@ function ActivityDetailsModal({ activityId, onClose, footer }) {
 /* ==========================================
    REPORTS VIEW
    ========================================== */
+// Same list as the server (reportController.js): shown first and marked urgent.
+const URGENT_REPORT_REASONS = ['Scam or suspicious activity', 'Safety concern'];
+
 function ReportsView() {
   const [reports, setReports] = useState([]);
   const [filter, setFilter] = useState('open');
@@ -1270,6 +1554,15 @@ function ReportsView() {
   const [action, setAction] = useState(null);
   // Group whose activity details are open in the details card.
   const [detailsGroup, setDetailsGroup] = useState(null);
+  // Tiles (independent of the status filter) and organizer shortcuts.
+  const [summary, setSummary] = useState(null);
+  const [organizerId, setOrganizerId] = useState(null);
+  const [suspendTarget, setSuspendTarget] = useState(null);
+  const [notifyReporters, setNotifyReporters] = useState(true);
+  const [notifyOrganizer, setNotifyOrganizer] = useState(true);
+
+  const loadSummary = () => adminFetch('/api/reports/summary').then(setSummary).catch(() => {});
+  useEffect(() => { loadSummary(); }, []);
 
   const load = async (status) => {
     setLoading(true);
@@ -1304,10 +1597,12 @@ function ReportsView() {
         return acc;
       }, {});
       const latest = Math.max(...group.reports.map((r) => new Date(r.createdAt).getTime()));
-      return { ...group, openReports, reasonCounts, latest };
+      // Urgent = an open scam or safety report.
+      const urgent = openReports.some((r) => r.urgent);
+      return { ...group, openReports, reasonCounts, latest, urgent };
     })
-    // Most open reports first, then most recent
-    .sort((a, b) => b.openReports.length - a.openReports.length || b.latest - a.latest)
+    // Urgent first, then most open reports, then most recent
+    .sort((a, b) => (b.urgent - a.urgent) || b.openReports.length - a.openReports.length || b.latest - a.latest)
     .filter((group) => {
       const term = search.trim().toLowerCase();
       if (!term) return true;
@@ -1319,7 +1614,27 @@ function ReportsView() {
   const toggle = (key) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const patchReport = (id, type, note) =>
-    adminFetch(`/api/reports/${id}`, { method: 'PATCH', body: JSON.stringify({ action: type, note }) });
+    adminFetch(`/api/reports/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ action: type, note, notifyReporters, notifyOrganizer }),
+    });
+
+  const openAction = (next) => {
+    setNotifyReporters(true);
+    setNotifyOrganizer(true);
+    setAction(next);
+  };
+
+  const suspendOrganizer = async (reason) => {
+    const data = await adminFetch(`/api/admin/organizers/${suspendTarget._id}/suspend`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason }),
+    });
+    setNotice(data.message);
+    setSuspendTarget(null);
+    setOrganizerId(null);
+    load(filter);
+  };
 
   const resolve = async (note) => {
     if (action.type === 'dismiss') {
@@ -1337,6 +1652,7 @@ function ReportsView() {
     }
     setAction(null);
     load(filter);
+    loadSummary();
   };
 
   const statusBadge = {
@@ -1373,6 +1689,21 @@ function ReportsView() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 text-slate-800">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className={summary?.urgent ? '[&_.eco-stat]:border-rose-200 [&_.eco-stat]:bg-rose-50/70' : ''}>
+          <StatTile label="Urgent" value={summary?.urgent} icon={AlertTriangle} hint="Open scam or safety reports" />
+        </div>
+        <div className={summary?.open ? '[&_.eco-stat]:border-amber-200 [&_.eco-stat]:bg-amber-50/70' : ''}>
+          <StatTile label="Open" value={summary?.open} icon={Flag} hint={summary ? `On ${summary.openActivities} activit${summary.openActivities === 1 ? 'y' : 'ies'}` : ' '} />
+        </div>
+        <StatTile
+          label="Resolved this week"
+          value={summary?.resolvedThisWeek}
+          icon={CheckCircle2}
+          hint={summary ? `${summary.dismissedThisWeek} dismissed · ${summary.hiddenThisWeek} activit${summary.hiddenThisWeek === 1 ? 'y' : 'ies'} hidden` : ' '}
+        />
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {['open', 'dismissed', 'actioned', 'all'].map((key) => (
@@ -1411,22 +1742,23 @@ function ReportsView() {
             const activity = group.activity;
             const organizer = activity?.organizer;
             return (
-              <article key={group.key} className="eco-card overflow-hidden">
+              <article key={group.key} className={`eco-card overflow-hidden ${group.urgent ? 'border-rose-200 shadow-[inset_4px_0_0_#e11d48]' : ''}`}>
                 {/* Activity header (click to expand) */}
                 <button
                   type="button"
                   onClick={() => toggle(group.key)}
                   className="flex w-full items-start gap-4 p-5 text-left transition hover:bg-eco-50/50"
                 >
-                  <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-200 bg-amber-50 text-amber-600">
+                  <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${group.urgent ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-amber-200 bg-amber-50 text-amber-600'}`}>
                     <Flag className="h-5 w-5" />
-                    <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                    <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ${group.urgent ? 'bg-rose-600' : 'bg-amber-500'}`}>
                       {group.reports.length}
                     </span>
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-base font-extrabold">{activity?.title || 'Deleted activity'}</h3>
+                      {group.urgent && <span className="eco-badge eco-badge-red">Urgent</span>}
                       {group.openReports.length > 0 && (
                         <span className="eco-badge eco-badge-amber">{group.openReports.length} open</span>
                       )}
@@ -1435,10 +1767,11 @@ function ReportsView() {
                     <p className="text-xs text-slate-500">
                       Organizer: {organizer?.organizationName || organizer?.name || 'Unassigned'}
                       {activity?.date && ` · ${new Date(activity.date).toLocaleDateString()}`}
+                      {activity && ` · ${activity.participantCount ?? 0} volunteer${activity.participantCount === 1 ? '' : 's'} joined`}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {Object.entries(group.reasonCounts).map(([reason, count]) => (
-                        <span key={reason} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
+                        <span key={reason} className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${URGENT_REPORT_REASONS.includes(reason) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                           {reason}{count > 1 && ` ×${count}`}
                         </span>
                       ))}
@@ -1447,6 +1780,25 @@ function ReportsView() {
                   <ChevronDown className={`mt-1 h-5 w-5 shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </button>
 
+                {/* Organizer's track record */}
+                {organizer?.record && (
+                  <div className="mx-5 mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-700 sm:ml-[76px]">
+                    <span>
+                      <span className="font-bold">{organizer.organizationName || organizer.name}'s record:</span>{' '}
+                      {organizer.record.reports} report{organizer.record.reports === 1 ? '' : 's'} on {organizer.record.activitiesReported} activit{organizer.record.activitiesReported === 1 ? 'y' : 'ies'}
+                      {' · '}{organizer.record.hiddenActivities > 0 ? `${organizer.record.hiddenActivities} activit${organizer.record.hiddenActivities === 1 ? 'y' : 'ies'} hidden` : 'nothing hidden'}
+                      {organizer.reviewedAt && ` · approved ${formatShortDate(organizer.reviewedAt)}`}
+                      {organizer.isSuspended && <span className="eco-badge eco-badge-red ml-1.5">Suspended</span>}
+                    </span>
+                    <span className="flex gap-1.5">
+                      <button type="button" onClick={() => setOrganizerId(organizer._id)} className="eco-btn eco-btn-secondary eco-btn-sm">View organizer</button>
+                      {!organizer.isSuspended && (
+                        <button type="button" onClick={() => setSuspendTarget(organizer)} className="eco-btn eco-btn-danger-soft eco-btn-sm">Suspend organizer</button>
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {/* Activity-level actions */}
                 {activity && (
                   <div className="flex flex-wrap justify-end gap-2 border-t border-eco-100 px-5 py-3">
@@ -1454,11 +1806,11 @@ function ReportsView() {
                       <Eye className="h-3.5 w-3.5" /> View activity details
                     </button>
                     {group.openReports.length > 0 && (<>
-                    <button type="button" onClick={() => setAction({ type: 'dismiss-all', group })} className="eco-btn eco-btn-secondary eco-btn-sm">
+                    <button type="button" onClick={() => openAction({ type: 'dismiss-all', group })} className="eco-btn eco-btn-secondary eco-btn-sm">
                       Dismiss all ({group.openReports.length})
                     </button>
                     {!activity.isHidden && (
-                      <button type="button" onClick={() => setAction({ type: 'hide', group })} className="eco-btn eco-btn-danger-soft eco-btn-sm">
+                      <button type="button" onClick={() => openAction({ type: 'hide', group })} className="eco-btn eco-btn-danger-soft eco-btn-sm">
                         Hide activity
                       </button>
                     )}
@@ -1489,7 +1841,7 @@ function ReportsView() {
                             )}
                           </div>
                           {report.status === 'open' && (
-                            <button type="button" onClick={() => setAction({ type: 'dismiss', group, report })} className="eco-btn eco-btn-secondary eco-btn-sm">
+                            <button type="button" onClick={() => openAction({ type: 'dismiss', group, report })} className="eco-btn eco-btn-secondary eco-btn-sm">
                               Dismiss
                             </button>
                           )}
@@ -1522,11 +1874,11 @@ function ReportsView() {
           onClose={() => setDetailsGroup(null)}
           footer={detailsGroup.openReports.length > 0 && (
             <>
-              <button type="button" onClick={() => { setAction({ type: 'dismiss-all', group: detailsGroup }); setDetailsGroup(null); }} className="eco-btn eco-btn-secondary eco-btn-sm">
+              <button type="button" onClick={() => { openAction({ type: 'dismiss-all', group: detailsGroup }); setDetailsGroup(null); }} className="eco-btn eco-btn-secondary eco-btn-sm">
                 Dismiss all ({detailsGroup.openReports.length})
               </button>
               {!detailsGroup.activity.isHidden && (
-                <button type="button" onClick={() => { setAction({ type: 'hide', group: detailsGroup }); setDetailsGroup(null); }} className="eco-btn eco-btn-danger-soft eco-btn-sm">
+                <button type="button" onClick={() => { openAction({ type: 'hide', group: detailsGroup }); setDetailsGroup(null); }} className="eco-btn eco-btn-danger-soft eco-btn-sm">
                   Hide activity
                 </button>
               )}
@@ -1535,13 +1887,52 @@ function ReportsView() {
         />
       )}
 
-      {action && (
+      {action && (() => {
+        const reporterCount = action.type === 'dismiss' ? 1 : action.group.openReports.length;
+        return (
+          <ReasonModal
+            {...modalText[action.type]}
+            danger={action.type === 'hide'}
+            required={action.type === 'hide'}
+            onConfirm={resolve}
+            onClose={() => setAction(null)}
+          >
+            <div className="mt-3 space-y-2 rounded-xl border border-eco-100 bg-eco-50/50 px-3.5 py-3 text-xs text-slate-700">
+              <label className="flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={notifyReporters} onChange={(e) => setNotifyReporters(e.target.checked)} className="mt-0.5 accent-eco-600" />
+                <span>Tell {reporterCount === 1 ? 'the reporter' : `the ${reporterCount} reporters`} it was reviewed</span>
+              </label>
+              {action.type === 'hide' && action.group.activity?.organizer && (
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input type="checkbox" checked={notifyOrganizer} onChange={(e) => setNotifyOrganizer(e.target.checked)} className="mt-0.5 accent-eco-600" />
+                  <span>Notify the organizer with my reason</span>
+                </label>
+              )}
+            </div>
+          </ReasonModal>
+        );
+      })()}
+
+      {organizerId && (
+        <OrganizerDetailsModal
+          organizerId={organizerId}
+          onClose={() => setOrganizerId(null)}
+          onSuspend={(o) => setSuspendTarget(o)}
+          onReactivate={() => setOrganizerId(null)}
+        />
+      )}
+
+      {suspendTarget && (
         <ReasonModal
-          {...modalText[action.type]}
-          danger={action.type === 'hide'}
-          required={action.type === 'hide'}
-          onConfirm={resolve}
-          onClose={() => setAction(null)}
+          title={`Suspend ${suspendTarget.organizationName || suspendTarget.name}?`}
+          description="They won't be able to log in, and all of their activities will be hidden from volunteers until you reactivate the account. Volunteer and certificate records are kept."
+          label="Reason"
+          placeholder="e.g. Multiple verified reports of misleading activities."
+          confirmLabel="Suspend organizer"
+          danger
+          required
+          onConfirm={suspendOrganizer}
+          onClose={() => setSuspendTarget(null)}
         />
       )}
     </div>
@@ -2014,9 +2405,11 @@ function OrganizerDetailsModal({ organizerId, onClose, onSuspend, onReactivate, 
             </div>
 
             <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-eco-100 bg-white/95 px-6 py-4 backdrop-blur">
-              <button type="button" onClick={() => onDelete(details)} className="eco-btn eco-btn-danger-soft mr-auto">
-                <Trash2 className="h-4 w-4" /> Delete
-              </button>
+              {onDelete && (
+                <button type="button" onClick={() => onDelete(details)} className="eco-btn eco-btn-danger-soft mr-auto">
+                  <Trash2 className="h-4 w-4" /> Delete
+                </button>
+              )}
               {status.key === 'active' && (
                 <button type="button" onClick={() => onSuspend(details)} className="eco-btn eco-btn-danger-soft">
                   <Ban className="h-4 w-4" /> Suspend

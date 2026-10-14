@@ -18,6 +18,9 @@ export const NOTIFICATION_STYLES = {
   organizer_rejected:    { Icon: XCircle,       tone: 'border-rose-200 bg-rose-50 text-rose-700' },
   volunteer_joined:      { Icon: UserPlus,      tone: 'border-eco-200 bg-eco-50 text-eco-700' },
   organizer_application: { Icon: ClipboardCheck, tone: 'border-amber-200 bg-amber-50 text-amber-700' },
+  report_reviewed:       { Icon: CheckCircle2,  tone: 'border-eco-200 bg-eco-50 text-eco-700' },
+  activity_hidden:       { Icon: Ban,           tone: 'border-rose-200 bg-rose-50 text-rose-700' },
+  activity_unhidden:     { Icon: CheckCircle2,  tone: 'border-eco-200 bg-eco-50 text-eco-700' },
 };
 
 export const formatNotificationTime = (value) => {
