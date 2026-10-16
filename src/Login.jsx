@@ -476,8 +476,7 @@ function Login({
                   <div>
                     <p className="font-semibold">Too many login attempts</p>
                     <p className="mt-0.5 text-amber-800">
-                      For your security, sign-in is paused. Try again in{" "}
-                      <span className="font-mono font-bold">{formatCountdown(remainingMs)}</span>.
+                      For your security, sign-in is paused.
                     </p>
                   </div>
                 </div>

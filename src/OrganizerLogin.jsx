@@ -116,6 +116,7 @@ function OrganizerLogin({
 
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   // Set when the account exists but the email isn't verified yet.
   const [verification, setVerification] = useState(null);
   const [lockedUntil, setLockedUntil] = useState(readLock);
@@ -432,8 +433,7 @@ function OrganizerLogin({
                   <div>
                     <p className="font-semibold">Too many login attempts</p>
                     <p className="mt-0.5 text-amber-800">
-                      For your security, sign-in is paused. Try again in{" "}
-                      <span className="font-mono font-bold">{formatCountdown(remainingMs)}</span>.
+                      For your security, sign-in is paused.
                     </p>
                   </div>
                 </div>

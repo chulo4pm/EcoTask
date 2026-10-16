@@ -317,6 +317,8 @@ function Register({
   const [serverErrors, setServerErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [policyModal, setPolicyModal] = useState(null);
   // Set after sign-up: shows the "enter your code" screen.
   const [verification, setVerification] = useState(null);
   // Props for the code screen, or null while the user is on the form. Going back
@@ -384,6 +386,8 @@ function Register({
   const handleSubmit = async (e) => {
 
     e.preventDefault();
+
+    if (!acceptedTerms) return;
 
     // Reveal every error on submit.
     setTouched(Object.fromEntries(Object.keys(EMPTY_FORM).map((key) => [key, true])));
@@ -971,11 +975,46 @@ function Register({
             </FormField>
 
 
+            <div className="mb-4 flex items-start gap-2 text-sm text-[#374151]">
+              <input
+                id="accept-terms"
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-1 accent-[#16b83b]"
+              />
+
+              <div>
+                <label htmlFor="accept-terms">I agree to the </label>
+
+                <button
+                  type="button"
+                  onClick={() => setPolicyModal("terms")}
+                  className="font-medium text-[#159447] underline"
+                >
+                  Terms &amp; Conditions
+                </button>
+
+                {" and "}
+
+                <button
+                  type="button"
+                  onClick={() => setPolicyModal("privacy")}
+                  className="font-medium text-[#159447] underline"
+                >
+                  Privacy Policy
+                </button>
+
+                .
+              </div>
+            </div>
+
+
             {/* REGISTER BUTTON */}
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !acceptedTerms}
               className="
                 h-[52px]
                 w-full
@@ -997,6 +1036,237 @@ function Register({
 
             </button>
 
+            {policyModal && (
+              <div
+                className="ecotask-modal-backdrop fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+                onClick={() => setPolicyModal(null)}
+              >
+                <section
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="policy-title"
+                  className="ecotask-modal-panel max-h-[85vh] w-full max-w-[600px] overflow-y-auto rounded-xl bg-white p-6 text-[#374151] shadow-xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                      <h2
+                        id="policy-title"
+                        className="text-xl font-bold text-[#1f5133]"
+                      >
+                        {policyModal === "terms"
+                          ? "Terms & Conditions"
+                          : "Privacy Policy"}
+                      </h2>
+                      <p className="mt-1 text-xs text-[#6b7280]">
+                        Effective date: [Add your publication date]
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setPolicyModal(null)}
+                      aria-label="Close policy"
+                      className="rounded-md px-3 py-1 text-lg font-semibold text-[#6b7280] hover:bg-[#f3f7f4]"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-4 text-sm leading-6">
+                    {policyModal === "terms" ? (
+                      <>
+                        <p>
+                          These Terms &amp; Conditions apply when you create an EcoTask
+                          account or use the EcoTask platform. By creating an account, you
+                          agree to follow these terms.
+                        </p>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            1. Accounts
+                          </h3>
+                          <p>
+                            Provide information that is accurate and keep your account
+                            details up to date. You are responsible for activity carried
+                            out through your account. Keep your password private and tell
+                            us promptly if you believe someone else has accessed your
+                            account.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            2. Participants
+                          </h3>
+                          <p>
+                            Read each activity’s description, requirements, schedule, and
+                            safety instructions before joining. Follow the organizer’s
+                            reasonable instructions and behave respectfully toward other
+                            participants. You are responsible for deciding whether an
+                            activity is suitable for you and for following applicable
+                            safety guidance.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            3. Organizers
+                          </h3>
+                          <p>
+                            Organizer registration may require review and approval.
+                            Provide accurate organization information and documents.
+                            Organizers are responsible for the accuracy of their activity
+                            listings, communicating important changes, and providing
+                            appropriate instructions for their activities.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            4. Acceptable use
+                          </h3>
+                          <p>
+                            Do not use EcoTask to break the law, impersonate another
+                            person, harass others, submit misleading information, disrupt
+                            the service, or access accounts or data without permission.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            5. Activities and availability
+                          </h3>
+                          <p>
+                            Activity details, availability, and schedules may change.
+                            EcoTask may update or remove listings and may temporarily
+                            change or suspend parts of the platform for maintenance,
+                            safety, or operational reasons.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            6. Account restrictions
+                          </h3>
+                          <p>
+                            EcoTask may review reports of suspected misuse and may
+                            restrict or suspend an account when reasonably necessary to
+                            protect users or the platform. Where appropriate, we will
+                            provide information about the restriction and how to contact
+                            us.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            7. Changes and contact
+                          </h3>
+                          <p>
+                            We may update these terms when the service or its requirements
+                            change. We will post the updated version here with a new
+                            effective date. Questions can be sent to [Add your support
+                            email address].
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p>
+                          This Privacy Policy explains how EcoTask proposes to handle
+                          personal information when you create an account or use the
+                          platform. Update this draft to reflect the information you
+                          actually collect and how you use it.
+                        </p>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            1. Information you provide
+                          </h3>
+                          <p>
+                            Depending on how you use EcoTask, this may include your name,
+                            email address, phone number, password, organization details,
+                            verification documents, activity registrations, and
+                            information you send through forms or support requests.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            2. How information is used
+                          </h3>
+                          <p>
+                            Information may be used to create and manage accounts, verify
+                            organizer applications, operate activity registrations,
+                            communicate service or account updates, respond to requests,
+                            help protect the platform, and meet applicable legal
+                            obligations.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            3. Sharing
+                          </h3>
+                          <p>
+                            EcoTask should only share information when needed to operate
+                            the service—for example, relevant registration details with
+                            an activity organizer—or when required by law. Describe any
+                            service providers that process information for EcoTask here,
+                            and do not promise that information is never shared if that
+                            is not accurate.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            4. Storage and security
+                          </h3>
+                          <p>
+                            Information should be kept only as long as needed for the
+                            purposes described in this policy or as required by law.
+                            EcoTask should use appropriate safeguards to protect it, but
+                            no method of online storage or transmission can be guaranteed
+                            to be completely secure.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            5. Your choices and requests
+                          </h3>
+                          <p>
+                            You may contact EcoTask to ask about the personal information
+                            associated with your account, request a correction, or raise
+                            a privacy concern. Requests may be subject to identity checks
+                            and applicable legal requirements.
+                          </p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-[#1f5133]">
+                            6. Policy updates and contact
+                          </h3>
+                          <p>
+                            If this policy changes, the updated version will be posted
+                            here with a new effective date. For privacy questions or
+                            requests, contact [Add your privacy/support email address].
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPolicyModal(null)}
+                    className="mt-6 w-full rounded-md bg-[#16b83b] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#12a834]"
+                  >
+                    Close
+                  </button>
+                </section>
+              </div>
+            )}
 
           </form>
 
