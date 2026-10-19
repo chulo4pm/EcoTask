@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const Report = require('../models/Report');
 const { REPORT_REASONS } = require('../models/Report');
 const Activity = require('../models/Activity');
-const { notifyUsers } = require('../utils/notify');
+const { notifyUsers, notifyAdmins } = require('../utils/notify');
 const { logActivityEvent } = require('../utils/activityLog');
 
 // Reports with these reasons are shown first and marked urgent for the admin.
@@ -32,7 +32,7 @@ exports.createReport = async (req, res) => {
       return res.status(400).json({ message: Object.values(errors)[0], errors });
     }
 
-    const activity = await Activity.findById(activityId).select('_id isHidden');
+    const activity = await Activity.findById(activityId).select('_id title organizer isHidden');
     if (!activity || activity.isHidden) {
       return res.status(404).json({ message: 'Activity not found' });
     }
@@ -47,6 +47,22 @@ exports.createReport = async (req, res) => {
       reporter: req.user._id,
       reason,
       details,
+    });
+
+    // Tell the organizer (without saying who reported) and the admins that there is a new report.
+    if (activity.organizer) {
+      notifyUsers([activity.organizer], {
+        type: 'activity_reported',
+        title: 'Your activity was reported',
+        message: `"${activity.title}" was reported: ${reason}. The admin will review it.`,
+        activity: activity._id,
+      });
+    }
+    notifyAdmins({
+      type: 'report_submitted',
+      title: 'New activity report',
+      message: `"${activity.title}" was reported: ${reason}.`,
+      activity: activity._id,
     });
 
     res.status(201).json({ message: 'Report submitted. Thank you for helping keep EcoTask safe.', reportId: report._id });
@@ -159,12 +175,14 @@ exports.getReports = async (req, res) => {
 exports.getReportSummary = async (req, res) => {
   try {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const [open, urgent, openActivities, dismissedThisWeek, actionedThisWeek] = await Promise.all([
+    const [open, urgent, openActivities, dismissedThisWeek, actionedThisWeek, dismissed, actioned] = await Promise.all([
       Report.countDocuments({ status: 'open' }),
       Report.countDocuments({ status: 'open', reason: { $in: URGENT_REASONS } }),
       Report.distinct('activity', { status: 'open' }),
       Report.countDocuments({ status: 'dismissed', resolvedAt: { $gte: weekAgo } }),
       Report.distinct('activity', { status: 'actioned', resolvedAt: { $gte: weekAgo } }),
+      Report.countDocuments({ status: 'dismissed' }),
+      Report.countDocuments({ status: 'actioned' }),
     ]);
     res.json({
       open,
@@ -173,6 +191,8 @@ exports.getReportSummary = async (req, res) => {
       dismissedThisWeek,
       hiddenThisWeek: actionedThisWeek.length,
       resolvedThisWeek: dismissedThisWeek + actionedThisWeek.length,
+      // Totals for the filter chips (all time, counted in reports).
+      totals: { open, dismissed, actioned, all: open + dismissed + actioned },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

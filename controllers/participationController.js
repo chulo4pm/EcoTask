@@ -4,6 +4,7 @@ const Participation = require('../models/Participation');
 const Activity = require('../models/Activity');
 const { notifyUsers } = require('../utils/notify');
 const { logActivityEvent } = require('../utils/activityLog');
+const { hasActivityEnded } = require('../utils/activityTime');
 
 // Checks that the logged-in organizer owns the activity. Admins may view (read-only).
 const canManageActivity = (user, activity) => (
@@ -14,7 +15,7 @@ const canManageActivity = (user, activity) => (
 exports.getMyRecords = async (req, res) => {
   try {
     const records = await Participation.find({ user: req.user._id })
-      .populate('activity', 'title date location time attendanceFinalized')
+      .populate('activity', 'title date location time endTime attendanceFinalized')
       .sort({ joinedAt: -1 });
 
     res.json(records.map((record) => ({
@@ -24,6 +25,7 @@ exports.getMyRecords = async (req, res) => {
       date: record.activity?.date,
       location: record.activity?.location,
       time: record.activity?.time,
+      endTime: record.activity?.endTime,
       // Attendance stays hidden ("Pending") until the organizer finalizes it.
       finalized: Boolean(record.activity?.attendanceFinalized),
       attendance: record.activity?.attendanceFinalized ? record.attendance : null,
@@ -54,24 +56,28 @@ const issueCertificatesFor = async (activityId) => {
   return eligibleRecords;
 };
 
-// Finalize attendance (owner organizer only): everyone still unmarked becomes absent, the
-// attendance becomes visible to volunteers, and present volunteers get their certificates.
-// Safe to run again after editing marks - only newly present volunteers get a new certificate.
+// Finalize attendance (owner organizer only), only after the activity has ended: everyone still
+// unmarked becomes absent, the attendance becomes visible to volunteers, and present volunteers
+// get their certificates. Finalizing is permanent - marks can't be changed afterwards.
 exports.finalizeActivityAttendance = async (req, res) => {
   try {
-    const activity = await Activity.findById(req.params.activityId).select('title date organizer attendanceFinalized');
+    const activity = await Activity.findById(req.params.activityId).select('title date endTime organizer attendanceFinalized');
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
     if (!canManageActivity(req.user, activity)) {
       return res.status(403).json({ message: 'You can only finalize attendance for your own activities' });
     }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (new Date(activity.date) >= new Date(today.getTime() + 24 * 60 * 60 * 1000)) {
-      return res.status(400).json({ message: "This activity hasn't happened yet. Finalize attendance on or after the day." });
+    if (activity.attendanceFinalized) {
+      return res.status(400).json({ message: 'Attendance is already finalized and can no longer be changed.' });
     }
 
-    const wasFinalized = activity.attendanceFinalized;
+    if (!hasActivityEnded(activity)) {
+      return res.status(400).json({
+        message: activity.endTime
+          ? `This activity hasn't ended yet. You can finalize attendance after ${activity.endTime}.`
+          : "This activity hasn't ended yet. You can finalize attendance after the activity day.",
+      });
+    }
+
     const unmarked = await Participation.updateMany(
       { activity: activity._id, attendance: null },
       { $set: { attendance: 'absent' } }
@@ -89,27 +95,18 @@ exports.finalizeActivityAttendance = async (req, res) => {
     logActivityEvent({
       activity: activity._id,
       type: 'finalized',
-      message: `${wasFinalized ? 'Attendance updated' : 'Attendance finalized'} · ${presentCount} present, ${absentCount} absent`,
+      message: `Attendance finalized · ${presentCount} present, ${absentCount} absent`,
       actor: req.user._id,
     });
 
-    // Tell volunteers: everyone the first time, afterwards only those who just got a certificate.
-    const everyone = await Participation.find({ activity: activity._id }).select('user attendance');
-    if (!wasFinalized) {
-      notifyUsers(everyone.map((r) => r.user), {
-        type: 'attendance_marked',
-        title: 'Attendance finalized',
-        message: `Your attendance for ${activity.title} is now final. Check your participation record.`,
-        activity: activity._id,
-      });
-    } else if (newlyIssued.length > 0) {
-      notifyUsers(newlyIssued.map((r) => r.user), {
-        type: 'attendance_marked',
-        title: 'Certificate issued',
-        message: `Your certificate for ${activity.title} is ready.`,
-        activity: activity._id,
-      });
-    }
+    // Tell every volunteer their attendance is now final.
+    const everyone = await Participation.find({ activity: activity._id }).select('user');
+    notifyUsers(everyone.map((r) => r.user), {
+      type: 'attendance_marked',
+      title: 'Attendance finalized',
+      message: `Your attendance for ${activity.title} is now final. Check your participation record.`,
+      activity: activity._id,
+    });
 
     res.json({
       message: `Attendance finalized. ${newlyIssued.length} new certificate(s) issued.`,
@@ -160,18 +157,13 @@ exports.updateAttendance = async (req, res) => {
     if (!record.activity || !canManageActivity(req.user, record.activity)) {
       return res.status(403).json({ message: 'You can only update attendance for your own activities' });
     }
+    if (record.activity.attendanceFinalized) {
+      return res.status(400).json({ message: 'Attendance is already finalized and can no longer be changed.' });
+    }
 
+    // Attendance is a draft until finalized (volunteers see "Pending"), so no notification here.
     record.attendance = attendance;
     await record.save();
-    // While attendance is a draft volunteers see "Pending", so only notify after it is finalized.
-    if (record.activity.attendanceFinalized) {
-      notifyUsers([record.user], {
-        type: 'attendance_marked',
-        title: 'Attendance updated',
-        message: `You were marked ${attendance} for ${record.activity.title}.`,
-        activity: record.activity._id,
-      });
-    }
     await record.populate('user', 'name email phone');
     res.json(record);
   } catch (error) {

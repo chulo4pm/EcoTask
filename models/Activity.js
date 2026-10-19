@@ -8,6 +8,8 @@ const activitySchema = new mongoose.Schema({
   meetingPlace: { type: String, default: '' },
   date: { type: Date, required: true },
   time: { type: String, default: '' },
+  // When the activity ends (same day), e.g. "5:00 PM". Older activities may not have one.
+  endTime: { type: String, default: '' },
   tasks: [{ type: String }],
   volunteerLimit: { type: Number, min: 1, default: 50 },
   coverImage: { type: String, default: null },

@@ -401,26 +401,47 @@ exports.reactivateOrganizer = async (req, res) => {
   }
 };
 
-// DELETE /api/admin/organizers/:id
-// Deletes the account and its private documents. Activities are KEPT (with their
-// volunteer and certificate records) but hidden and unassigned, so the admin can
-// assign them to another organizer in Activity Oversight.
+// DELETE /api/admin/organizers/:id   body: { reason }
+// Deletes the account, its private documents and every activity it posted (with the
+// sign-ups, reports and history of those activities). Each volunteer who had joined
+// one of those activities is notified with the admin's reason.
 exports.deleteOrganizer = async (req, res) => {
   try {
+    const reason = String(req.body?.reason || '').trim();
+    if (reason.length < 5) {
+      return res.status(400).json({ message: 'Please give a reason (at least 5 characters). Volunteers will see it.' });
+    }
+
     const organizer = await findOrganizer(req.params.id, res);
     if (!organizer) return;
 
     const label = organizer.organizationName || organizer.name;
-    const result = await Activity.updateMany(
-      { organizer: organizer._id },
-      {
-        organizer: null,
-        isHidden: true,
-        hiddenReason: `Organizer account (${label}) was deleted. Assign a new organizer before showing it again.`,
-        hiddenAt: new Date(),
-        hiddenBySuspension: false,
+    // A notification holds 500 characters, so a very long reason is shortened there.
+    const shortReason = reason.length > 250 ? `${reason.slice(0, 247)}...` : reason;
+    const activities = await Activity.find({ organizer: organizer._id });
+
+    for (const activity of activities) {
+      const participations = await Participation.find({ activity: activity._id }).select('user');
+      const volunteerIds = [
+        ...(activity.participants || []),
+        ...participations.map((p) => p.user),
+      ];
+      await notifyUsers(volunteerIds, {
+        type: 'activity_cancelled',
+        title: 'Activity removed',
+        message: `"${activity.title}" was removed because the organizer account (${label}) was deleted by the admin. Reason: ${shortReason}`,
+      });
+      await Promise.all([
+        Participation.deleteMany({ activity: activity._id }),
+        Report.deleteMany({ activity: activity._id }),
+        ActivityEvent.deleteMany({ activity: activity._id }),
+      ]);
+      if (activity.coverImage && activity.coverImage.startsWith('/uploads/')) {
+        await deleteFile(BUCKETS.activityImages, path.basename(activity.coverImage)).catch(() => {});
+        await fs.promises.unlink(path.join(__dirname, '..', activity.coverImage)).catch(() => {});
       }
-    );
+      await Activity.deleteOne({ _id: activity._id });
+    }
 
     // Remove the private verification files (database and any older disk copies)
     await Promise.all((organizer.organizerDocuments || []).map((doc) => Promise.all([
@@ -430,8 +451,11 @@ exports.deleteOrganizer = async (req, res) => {
 
     await User.deleteOne({ _id: organizer._id });
 
+    const count = activities.length;
     res.json({
-      message: `${label} deleted. ${result.modifiedCount} activit${result.modifiedCount === 1 ? 'y was' : 'ies were'} hidden and can be reassigned in Activity Oversight.`,
+      message: count > 0
+        ? `${label} deleted. ${count} activit${count === 1 ? 'y was' : 'ies were'} removed and the joined volunteers were notified.`
+        : `${label} deleted.`,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -489,6 +513,7 @@ exports.getActivityDetails = async (req, res) => {
         meetingPlace: activity.meetingPlace,
         date: activity.date,
         time: activity.time,
+        endTime: activity.endTime,
         volunteerLimit: activity.volunteerLimit,
         participantCount: participations.length,
         coverImage: activity.coverImage,

@@ -4,24 +4,32 @@ const Participation = require('../models/Participation');
 const User = require('../models/User');
 const Announcement = require('../models/Announcement');
 const Report = require('../models/Report');
+const { hasActivityEnded } = require('../utils/activityTime');
 
 const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // Build admin metrics such as activity count, volunteer totals, and registration trends.
 exports.getAdminStats = async (req, res) => {
   try {
-    const [activitiesCreated, totalVolunteers, monthlyRegistrations, certificatesIssued, pendingOrganizers, openReports, approvedOrganizers] = await Promise.all([
+    // Trend charts cover the current calendar year, grouped by month.
+    const yearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
+    const monthlyCount = (Model, match) => Model.aggregate([
+      { $match: { ...match, createdAt: { $gte: yearStart } } },
+      { $group: { _id: { $month: '$createdAt' }, count: { $sum: 1 } } },
+      { $sort: { '_id': 1 } },
+    ]);
+    const toMonthly = (rows) => rows.map((item) => ({ month: monthNames[item._id - 1], count: item.count }));
+
+    const [activitiesCreated, totalVolunteers, monthlyRegistrations, certificatesIssued, pendingOrganizers, openReports, approvedOrganizers, monthlyOrganizers, monthlyActivities] = await Promise.all([
       Activity.countDocuments(),
       User.countDocuments({ role: 'volunteer' }),
-      User.aggregate([
-        { $match: { role: 'volunteer' } },
-        { $group: { _id: { $month: '$createdAt' }, count: { $sum: 1 } } },
-        { $sort: { '_id': 1 } },
-      ]),
+      monthlyCount(User, { role: 'volunteer' }),
       Participation.countDocuments({ certificateIssued: true }),
       User.countDocuments({ role: 'organizer', organizerStatus: 'pending' }),
       Report.countDocuments({ status: 'open' }),
       User.countDocuments({ role: 'organizer', organizerStatus: 'approved' }),
+      monthlyCount(User, { role: 'organizer' }),
+      monthlyCount(Activity, {}),
     ]);
 
     res.json({
@@ -31,10 +39,9 @@ exports.getAdminStats = async (req, res) => {
       pendingOrganizers,
       openReports,
       approvedOrganizers,
-      monthlyRegistrations: monthlyRegistrations.map((item) => ({
-        month: monthNames[item._id - 1],
-        count: item.count,
-      })),
+      monthlyRegistrations: toMonthly(monthlyRegistrations),
+      monthlyOrganizers: toMonthly(monthlyOrganizers),
+      monthlyActivities: toMonthly(monthlyActivities),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -62,12 +69,11 @@ exports.getVolunteerStats = async (req, res) => {
 exports.getOrganizerStats = async (req, res) => {
   try {
     const activities = await Activity.find({ organizer: req.user._id })
-      .select('_id date participants isHidden title attendanceFinalized');
+      .select('_id date endTime participants isHidden title attendanceFinalized');
     const activityIds = activities.map((a) => a._id);
     const titleById = new Map(activities.map((a) => [String(a._id), a.title]));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(today.getTime() + 24 * 60 * 60 * 1000);
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const [records, openReportList, recentJoins, recentReports] = await Promise.all([
@@ -98,7 +104,8 @@ exports.getOrganizerStats = async (req, res) => {
     const needsAttention = [];
     activities.forEach((activity) => {
       const list = byActivity.get(String(activity._id)) || [];
-      if (list.length === 0 || new Date(activity.date) >= endOfToday) return;
+      // Only activities that have ended can be finalized.
+      if (list.length === 0 || !hasActivityEnded(activity)) return;
       if (!activity.attendanceFinalized) {
         needsAttention.push({
           type: 'finalize',

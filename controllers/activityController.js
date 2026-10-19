@@ -8,6 +8,9 @@ const { logActivityEvent } = require('../utils/activityLog');
 const fs = require('fs/promises');
 const path = require('path');
 const { BUCKETS, deleteFile } = require('../utils/fileStore');
+const {
+  TIME_PATTERN, parseTimeLabel, getActivityPhase, hasActivityStarted,
+} = require('../utils/activityTime');
 
 const removeStoredImage = async (imagePath) => {
   if (!imagePath || !imagePath.startsWith('/uploads/')) return;
@@ -38,35 +41,22 @@ const parseTasks = (tasks) => {
   }
 };
 
-// Activity dates are saved as midnight UTC of the chosen day, so the ISO date is the
-// activity's calendar day. "Today" must be the local day where EcoTask is used
-// (the server runs in UTC, which is 8 hours behind the Philippines).
-const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Manila';
-const activityDayKey = (dateValue) => new Date(dateValue).toISOString().slice(0, 10);
-const todayKey = () => new Intl.DateTimeFormat('en-CA', {
-  timeZone: APP_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date());
-
-const getDateStatus = (dateValue) => {
-  const day = activityDayKey(dateValue);
-  const today = todayKey();
-  if (day < today) return 'completed';
-  if (day === today) return 'ongoing';
-  return 'upcoming';
-};
+// Status follows the clock: upcoming (a later day), ongoing (the day of the event, until its
+// end time) and completed (after the end time). See utils/activityTime.js.
+const getDateStatus = getActivityPhase;
 
 const formatActivity = (activity) => {
   const result = activity.toObject ? activity.toObject() : activity;
   return {
     ...result,
-    status: getDateStatus(result.date),
+    status: getDateStatus(result),
     participantCount: result.participants?.length || 0,
   };
 };
 
 // Only these fields can be set from a form. Prevents a request from setting
 // `organizer`, `participants`, or `isHidden` directly (mass-assignment).
-const EDITABLE_FIELDS = ['title', 'description', 'location', 'meetingPlace', 'date', 'time', 'volunteerLimit'];
+const EDITABLE_FIELDS = ['title', 'description', 'location', 'meetingPlace', 'date', 'time', 'endTime', 'volunteerLimit'];
 
 const pickActivityFields = (body) => {
   const data = {};
@@ -84,7 +74,6 @@ const LIMITS = {
   placeMin: 3, placeMax: 200,
   volunteerMin: 1, volunteerMax: 1000,
 };
-const TIME_PATTERN = /^(1[0-2]|[1-9]):00 (AM|PM)$/;
 
 const startOfDay = (value) => {
   const d = new Date(value);
@@ -138,6 +127,14 @@ const validateActivityFields = (data, { partial = false, checkFutureDate = !part
   if (need('time')) {
     if (!data.time) errors.time = 'Please select a time.';
     else if (!TIME_PATTERN.test(data.time)) errors.time = 'Time must look like "8:00 AM".';
+  }
+
+  if (need('endTime')) {
+    if (!data.endTime) errors.endTime = 'Please select an end time.';
+    else if (!TIME_PATTERN.test(data.endTime)) errors.endTime = 'End time must look like "5:00 PM".';
+    else if (!errors.time && data.time && parseTimeLabel(data.endTime) <= parseTimeLabel(data.time)) {
+      errors.endTime = 'End time must be later than the start time.';
+    }
   }
 
   if (need('volunteerLimit')) {
@@ -282,6 +279,17 @@ exports.updateActivity = async (req, res) => {
       return res.status(400).json({ message: Object.values(errors)[0], errors });
     }
 
+    // Changing only the start or only the end time must still leave the end after the start.
+    if (!errors.time && !errors.endTime && (updates.time !== undefined || updates.endTime !== undefined)) {
+      const start = parseTimeLabel(updates.time ?? activity.time);
+      const end = parseTimeLabel(updates.endTime ?? activity.endTime);
+      if (start !== null && end !== null && end <= start) {
+        await discardUploadedImage(req);
+        const message = 'End time must be later than the start time.';
+        return res.status(400).json({ message, errors: { endTime: message } });
+      }
+    }
+
     if (updates.volunteerLimit !== undefined && updates.volunteerLimit < activity.participants.length) {
       await discardUploadedImage(req);
       return res.status(400).json({
@@ -290,7 +298,7 @@ exports.updateActivity = async (req, res) => {
     }
 
     // Volunteers care about changes to what/when/where, not description edits.
-    const CHANGE_LABELS = { title: 'title', date: 'date', time: 'time', location: 'location', meetingPlace: 'meeting place' };
+    const CHANGE_LABELS = { title: 'title', date: 'date', time: 'time', endTime: 'end time', location: 'location', meetingPlace: 'meeting place' };
     const changed = Object.keys(CHANGE_LABELS).filter((field) => {
       if (updates[field] === undefined) return false;
       if (field === 'date') return startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
@@ -306,6 +314,7 @@ exports.updateActivity = async (req, res) => {
       return String(updates[field]) !== String(activity[field] ?? '');
     }).map((field) => {
       if (field === 'time') return `time ${activity.time || '—'} → ${updates.time}`;
+      if (field === 'endTime') return `end time ${activity.endTime || '—'} → ${updates.endTime}`;
       if (field === 'volunteerLimit') return `volunteer limit ${activity.volunteerLimit} → ${updates.volunteerLimit}`;
       return LOG_LABELS[field];
     });
@@ -377,7 +386,7 @@ exports.joinActivity = async (req, res) => {
     }
 
     // Registration closes when the activity day starts.
-    const dateStatus = getDateStatus(activity.date);
+    const dateStatus = getDateStatus(activity);
     if (dateStatus === 'completed') {
       return res.status(400).json({ message: 'Completed activities cannot be joined' });
     }
@@ -429,6 +438,13 @@ exports.leaveActivity = async (req, res) => {
     );
     if (participantIndex === -1) {
       return res.status(400).json({ message: 'You have not joined this activity' });
+    }
+
+    // Once the activity starts, volunteers are committed. This also covers finished activities.
+    if (hasActivityStarted(activity)) {
+      return res.status(400).json({
+        message: "You can't cancel your registration anymore. The activity has already started.",
+      });
     }
 
     activity.participants.splice(participantIndex, 1);
