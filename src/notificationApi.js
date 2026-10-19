@@ -1,5 +1,5 @@
 import {
-  Ban, CalendarClock, CheckCircle2, ClipboardCheck, Flag, Leaf, Megaphone, UserPlus, XCircle,
+  Ban, CalendarClock, MessageSquare, CheckCircle2, ClipboardCheck, Flag, Leaf, Megaphone, UserPlus, XCircle,
 } from 'lucide-react';
 import { API_BASE_URL } from './config';
 
@@ -23,6 +23,7 @@ export const NOTIFICATION_STYLES = {
   activity_unhidden:     { Icon: CheckCircle2,  tone: 'border-eco-200 bg-eco-50 text-eco-700' },
   activity_reported:     { Icon: Flag,          tone: 'border-rose-200 bg-rose-50 text-rose-700' },
   report_submitted:      { Icon: Flag,          tone: 'border-rose-200 bg-rose-50 text-rose-700' },
+  feedback_submitted:    { Icon: MessageSquare, tone: 'border-eco-200 bg-eco-50 text-eco-700' },
 };
 
 export const formatNotificationTime = (value) => {

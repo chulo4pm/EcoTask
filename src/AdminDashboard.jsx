@@ -34,7 +34,10 @@ import {
   AlertTriangle,
   Mail,
   Trees,
+  MessageSquare,
+  Star,
 } from 'lucide-react';
+import { FEEDBACK_CATEGORIES } from './Feedback';
 import NotificationBell from "./NotificationBell";
 import { API_BASE_URL } from "./config";
 
@@ -46,6 +49,7 @@ const navItems = [
   { label: 'Reports', icon: Flag },
   { label: 'User Management', icon: Users },
   { label: 'Announcements', icon: Megaphone },
+  { label: 'Feedback', icon: MessageSquare },
 ];
 
 
@@ -78,10 +82,22 @@ export default function AdminDashboard({ onLogout }) {
 
   // Profile Dropdown State
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [feedbackUnread, setFeedbackUnread] = useState(0);
   // Logged-in admin's name/email (updated live from Account Settings)
   const [adminProfile, setAdminProfile] = useState(() => JSON.parse(localStorage.getItem('adminInfo') || '{}'));
   const adminName = adminProfile.name || 'Administrator';
   const adminEmail = adminProfile.email || '';
+
+  // Unread feedback count for the sidebar badge.
+  useEffect(() => {
+    let cancelled = false;
+    const loadUnread = () => adminFetch('/api/feedback/admin')
+      .then((list) => { if (!cancelled && Array.isArray(list)) setFeedbackUnread(list.filter((item) => !item.readAt).length); })
+      .catch(() => {});
+    loadUnread();
+    const timer = setInterval(loadUnread, 30000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
   const handleLogout = () => {
     setShowProfileMenu(false);
@@ -98,6 +114,7 @@ export default function AdminDashboard({ onLogout }) {
     Reports: { title: 'Reports', subtitle: 'Activities reported by volunteers.' },
     'User Management': { title: 'User Management', subtitle: 'View and manage volunteer and organizer accounts.' },
     Announcements: { title: 'Announcements', subtitle: 'Post updates for volunteers, organizers, or everyone.' },
+    Feedback: { title: 'User Feedback', subtitle: 'What volunteers and organizers tell you about EcoTask.' },
     Settings: { title: 'Account Settings', subtitle: 'Manage your admin profile, password, and sessions.' },
   };
   const todayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -166,6 +183,11 @@ export default function AdminDashboard({ onLogout }) {
                     <Icon className="h-[18px] w-[18px]" />
                   </span>
                   <span>{label}</span>
+                  {label === 'Feedback' && feedbackUnread > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[10px] font-extrabold text-eco-800">
+                      {feedbackUnread > 9 ? '9+' : feedbackUnread}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -203,6 +225,7 @@ export default function AdminDashboard({ onLogout }) {
               onOpen={(item) => {
                 if (item.type === 'organizer_application') setActiveTab('Organizer Approvals');
                 else if (item.type === 'report_submitted') setActiveTab('Reports');
+                else if (item.type === 'feedback_submitted') setActiveTab('Feedback');
                 else setActiveTab('Dashboard');
               }}
             />
@@ -275,6 +298,7 @@ export default function AdminDashboard({ onLogout }) {
             {activeTab === 'Reports' && <ReportsView />}
             {activeTab === 'User Management' && <UserManagementView />}
             {activeTab === 'Announcements' && <AnnouncementsView />}
+            {activeTab === 'Feedback' && <FeedbackView onUnreadChange={setFeedbackUnread} />}
             {activeTab === 'Settings' && <SettingsView onProfileChange={setAdminProfile} onSessionEnded={handleLogout} />}
           </div>
         </main>
@@ -3869,6 +3893,160 @@ function SettingsView({ onProfileChange, onSessionEnded }) {
           danger
           onConfirm={logoutAll}
           onClose={() => setConfirmLogoutAll(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+
+/* ==========================================
+   FEEDBACK VIEW
+   What volunteers and organizers sent through "Send feedback".
+   ========================================== */
+const timeAgo = (value) => {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+};
+
+function Stars({ value }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" role="img" aria-label={`${value} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Star key={n} className={`h-3.5 w-3.5 ${n <= value ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
+      ))}
+    </span>
+  );
+}
+
+function FeedbackView({ onUnreadChange }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [who, setWho] = useState('all');
+  const [category, setCategory] = useState('all');
+  const [onlyNew, setOnlyNew] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const load = async () => {
+    try {
+      setItems(await adminFetch('/api/feedback/admin'));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const markRead = async (item) => {
+    await adminFetch(`/api/feedback/admin/${item._id}/read`, { method: 'PATCH' }).catch(() => {});
+    setItems((list) => list.map((entry) => (entry._id === item._id ? { ...entry, readAt: new Date().toISOString() } : entry)));
+  };
+  const remove = async () => {
+    await adminFetch(`/api/feedback/admin/${deleteTarget._id}`, { method: 'DELETE' });
+    setItems((list) => list.filter((entry) => entry._id !== deleteTarget._id));
+    setDeleteTarget(null);
+  };
+
+  const unread = items.filter((item) => !item.readAt).length;
+  useEffect(() => { onUnreadChange?.(unread); }, [unread, onUnreadChange]);
+  const average = items.length ? (items.reduce((sum, item) => sum + item.rating, 0) / items.length).toFixed(1) : '—';
+  const fromVolunteers = items.filter((item) => item.role === 'volunteer').length;
+  const fromOrganizers = items.filter((item) => item.role === 'organizer').length;
+
+  const filtered = items.filter((item) => (
+    (who === 'all' || item.role === who)
+    && (category === 'all' || item.category === category)
+    && (!onlyNew || !item.readAt)
+  ));
+
+  if (loading) return <div className="eco-card h-96 animate-pulse bg-white/70" />;
+
+  const roleChips = [
+    { key: 'all', label: 'All', count: items.length },
+    { key: 'volunteer', label: 'Volunteers', count: fromVolunteers },
+    { key: 'organizer', label: 'Organizers', count: fromOrganizers },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatTile label="NEW FEEDBACK" value={unread} icon={MessageSquare} hint="Not marked as read yet" />
+        <StatTile label="AVERAGE RATING" value={average} icon={Star} hint={`Out of 5 · ${items.length} total`} />
+        <StatTile label="FROM VOLUNTEERS / ORGANIZERS" value={`${fromVolunteers} / ${fromOrganizers}`} icon={Users} hint="Who is sending feedback" />
+      </div>
+
+      <section className="eco-card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-eco-100 px-5 py-4">
+          {roleChips.map(({ key, label, count }) => (
+            <button key={key} type="button" onClick={() => setWho(key)} className={`eco-chip px-3.5 py-1.5 ${who === key ? 'eco-chip-active' : ''}`}>
+              {label} <span className="eco-chip-count">{count}</span>
+            </button>
+          ))}
+          <span className="mx-1 hidden h-5 w-px bg-eco-100 sm:block" />
+          <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category" className="eco-input w-auto py-1.5 text-xs">
+            <option value="all">All categories</option>
+            {FEEDBACK_CATEGORIES.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
+          </select>
+          <label className="ml-auto flex items-center gap-2 text-xs font-semibold text-slate-600">
+            <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} className="h-4 w-4 accent-green-700" /> New only
+          </label>
+        </div>
+
+        <div className="divide-y divide-eco-100">
+          {filtered.length === 0 && (
+            <div className="eco-empty m-5"><MessageSquare className="h-5 w-5 text-eco-400" /> No feedback here yet.</div>
+          )}
+          {filtered.map((item) => {
+            const cat = FEEDBACK_CATEGORIES.find((entry) => entry.key === item.category) || FEEDBACK_CATEGORIES[3];
+            const CatIcon = cat.icon;
+            const name = item.user?.name || 'Deleted user';
+            return (
+              <article key={item._id} className={`flex gap-3 px-5 py-4 ${item.readAt ? '' : 'bg-eco-50/50'}`}>
+                <div className="eco-avatar h-10 w-10 shrink-0 text-xs">{name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="text-sm font-extrabold text-slate-800">{name}</p>
+                    <span className={`eco-badge ${item.role === 'organizer' ? 'eco-badge-amber' : 'eco-badge-green'}`}>{item.role === 'organizer' ? 'Organizer' : 'Volunteer'}</span>
+                    <span className="eco-badge eco-badge-gray"><CatIcon className="h-3 w-3" /> {cat.label}</span>
+                    {!item.readAt && <span className="eco-badge eco-badge-red">New</span>}
+                    <span className="ml-auto text-[11px] font-medium text-slate-400">{timeAgo(item.createdAt)}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                    <Stars value={item.rating} />
+                    {item.user?.email && <span className="truncate">{item.user.email}</span>}
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700 [overflow-wrap:anywhere]">{item.message}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!item.readAt && (
+                      <button type="button" onClick={() => markRead(item)} className="eco-btn eco-btn-secondary eco-btn-sm"><CheckCircle2 className="h-3.5 w-3.5" /> Mark as read</button>
+                    )}
+                    <button type="button" onClick={() => setDeleteTarget(item)} className="eco-btn eco-btn-danger-soft eco-btn-sm"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      {deleteTarget && (
+        <ReasonModal
+          title="Delete this feedback?"
+          description={`Feedback from ${deleteTarget.user?.name || 'a deleted user'} will be removed permanently.`}
+          confirmLabel="Delete feedback"
+          danger
+          onConfirm={remove}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
     </div>

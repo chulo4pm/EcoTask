@@ -1,3 +1,4 @@
+import FeedbackModal from './Feedback';
 import { useEffect, useState } from 'react';
 import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
 import {
@@ -40,6 +41,7 @@ import {
   EyeOff,
   Building2,
   Ban,
+  MessageSquare,
 } from 'lucide-react';
 import NotificationBell from "./NotificationBell";
 import AnnouncementsFeed from "./AnnouncementsFeed";
@@ -353,6 +355,7 @@ function OrganizerWorkspace({ account, onLogout }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activityFilter, setActivityFilter] = useState('All');
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   // Set by a "New volunteer joined" notification: Manage Activities opens that activity's volunteer list.
   const [openVolunteersFor, setOpenVolunteersFor] = useState(null);
 
@@ -476,6 +479,13 @@ function OrganizerWorkspace({ account, onLogout }) {
                 </div>
                 <button
                   type="button"
+                  onClick={() => { setShowProfileMenu(false); setFeedbackOpen(true); }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-eco-50"
+                >
+                  <MessageSquare className="h-4 w-4 text-eco-700" /> Send feedback
+                </button>
+                <button
+                  type="button"
                   onClick={onLogout}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
                 >
@@ -486,6 +496,8 @@ function OrganizerWorkspace({ account, onLogout }) {
           </div>
           </div>
         </header>
+
+        {feedbackOpen && <FeedbackModal role="organizer" token={getOrganizerInfo().token} onClose={() => setFeedbackOpen(false)} />}
 
         <main key={activeTab} className="ecotask-page-enter eco-scroll flex-1 overflow-y-auto px-4 py-6 lg:px-8">
           <div className="mx-auto w-full max-w-7xl">

@@ -1,3 +1,4 @@
+import FeedbackModal from './Feedback'
 import volunteerImage from './assets/voluteer.jpg'
 import { jsPDF } from 'jspdf'
 import { formatTimeRange, getActivityStatus, hasActivityEnded, hasActivityStarted, useStatusRefresh } from './activityTime'
@@ -89,6 +90,7 @@ import {
   Flag,
   Building2,
   Lock,
+  MessageSquare,
 } from 'lucide-react'
 import { NOTIFICATION_STYLES, formatNotificationTime, notificationRequest } from './notificationApi'
 import AnnouncementsFeed from './AnnouncementsFeed'
@@ -182,6 +184,7 @@ function VolunteerSuspendedScreen({ name, reason, checking, onRefresh, onLogout 
 export default function App({ onLogout }) {
   const [activePage, setActivePage] = useState('dashboard')
   const [profileOpen, setProfileOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState(() => {
@@ -627,6 +630,14 @@ export default function App({ onLogout }) {
                   </button>
 
                   <button
+                    onClick={() => { setProfileOpen(false); setFeedbackOpen(true) }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold transition hover:bg-eco-50"
+                  >
+                    <MessageSquare size={15} className="text-eco-700" />
+                    Send feedback
+                  </button>
+
+                  <button
                     onClick={() => {
                       setProfileOpen(false)
                       // The app's logout removes the saved login (and says goodbye by name).
@@ -646,6 +657,14 @@ export default function App({ onLogout }) {
             </div>
           </div>
         </header>
+
+        {feedbackOpen && (
+          <FeedbackModal
+            role="volunteer"
+            token={JSON.parse(localStorage.getItem('userInfo') || '{}').token}
+            onClose={() => setFeedbackOpen(false)}
+          />
+        )}
 
         {/* ================= SCROLLABLE CONTENT ================= */}
         <main key={activePage} className="ecotask-page-scroll ecotask-page-enter eco-scroll flex-1 overflow-y-auto">
