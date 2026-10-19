@@ -1,3 +1,4 @@
+import { SUPPORT_EMAIL } from "./contact";
 import {
   AlertCircle,
   ArrowLeft,
@@ -737,22 +738,6 @@ function OrganizerRegister({
             </h1>
 
 
-            <p
-              className="
-                mx-auto
-                mt-4
-                max-w-[380px]
-                text-[13px]
-                leading-6
-                text-[#4b5563]
-              "
-            >
-
-              Post activities for your group. Upload a document
-              that proves your organization is real (e.g. business
-              permit, SEC/DTI registration, or school/LGU letter).
-
-            </p>
 
 
           </div>
@@ -1015,7 +1000,7 @@ function OrganizerRegister({
 
             <div className="mb-5">
               <p className="mb-1.5 text-[13px] font-semibold text-[#374151]">
-                Verification documents <span className="font-normal text-[#6b7280]">(JPG, PNG or PDF · max 5 MB each · up to 3)</span>
+                Verification documents <span className="font-normal text-[#6b7280]">(Upload a document that proves your organization is real e.g. business permit, SEC/DTI registration, or school/LGU letter.)</span>
               </p>
 
               <label
@@ -1029,7 +1014,7 @@ function OrganizerRegister({
                   <Upload size={18} />
                 </span>
                 <span className="text-[13px] text-[#374151]">
-                  <span className="font-semibold text-[#159447]">Click to upload</span> or drag files here
+                  <span className="font-semibold text-[#159447]">Click to upload</span> or drag files here 5mb max. JPG, PNG, or PDF. Up to 3 files.
                 </span>
                 <input
                   type="file"
@@ -1147,9 +1132,6 @@ function OrganizerRegister({
                           ? "Terms & Conditions"
                           : "Privacy Policy"}
                       </h2>
-                      <p className="mt-1 text-xs text-[#6b7280]">
-                        Effective date: [Add your publication date]
-                      </p>
                     </div>
 
                     <button
@@ -1253,9 +1235,7 @@ function OrganizerRegister({
                           </h3>
                           <p>
                             We may update these terms when the service or its requirements
-                            change. We will post the updated version here with a new
-                            effective date. Questions can be sent to [Add your support
-                            email address].
+                            change. We will post the updated version here. Questions can be sent to {SUPPORT_EMAIL}.
                           </p>
                         </div>
                       </>
@@ -1337,9 +1317,7 @@ function OrganizerRegister({
                             6. Policy updates and contact
                           </h3>
                           <p>
-                            If this policy changes, the updated version will be posted
-                            here with a new effective date. For privacy questions or
-                            requests, contact [Add your privacy/support email address].
+                            If this policy changes, the updated version will be posted here. For privacy questions or requests, contact {SUPPORT_EMAIL}.
                           </p>
                         </div>
                       </>

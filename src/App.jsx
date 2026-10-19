@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { SUPPORT_EMAIL, SUPPORT_PHONE } from "./contact";
 import {
   Check,
   Leaf,
@@ -279,13 +280,6 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
               )}
             </div>
 
-            {/* Sign up shows on bigger screens; on phones it's in the menu (☰). */}
-            <span className="hidden sm:block">
-              <button onClick={onGetStarted} className={`${primaryBtn} px-4 py-2.5 text-sm`}>
-                Sign up
-              </button>
-            </span>
-
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="rounded-lg p-2 text-white md:hidden"
@@ -356,19 +350,16 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
               certificate for every activity you complete.
             </p>
 
-            <div className="landing-up mt-8" style={{ animationDelay: "460ms" }}>
+            <div className="landing-up mt-8 flex flex-col gap-3 sm:flex-row" style={{ animationDelay: "460ms" }}>
               <button onClick={onGetStarted} className={`${primaryBtn} px-7 py-4 text-[15px]`}>
                 Join as Volunteer
                 <ArrowRight size={18} />
               </button>
-            </div>
-
-            <p className="landing-up mt-5 text-sm text-white/70" style={{ animationDelay: "460ms" }}>
-              Running an eco activity?{" "}
-              <button onClick={onOrganizerRegister} className="font-bold text-green-400 transition hover:text-green-300">
-                Apply as an organizer →
+              <button onClick={onOrganizerRegister} className={`${ghostBtn} border-green-400/60 bg-black/20 px-7 py-4 text-[15px] backdrop-blur-sm hover:border-green-400 hover:bg-green-500/15`}>
+                Apply as Organizer
+                <ArrowRight size={18} className="text-green-400" />
               </button>
-            </p>
+            </div>
 
             <div className="landing-up mt-10 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-white/75" style={{ animationDelay: "580ms" }}>
               <span className="flex items-center gap-2"><CheckCircle2 size={16} className="text-green-400" /> Free for volunteers</span>
@@ -423,11 +414,6 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
                     <li key={item} className="flex items-start gap-2.5"><CheckCircle2 size={18} className="mt-px shrink-0 text-green-500" />{item}</li>
                   ))}
                 </ul>
-                <div className="mt-auto flex flex-wrap gap-2.5">
-                  <button onClick={onGetStarted} className={`${primaryBtn} px-5 py-3 text-sm`}>
-                    Sign up free <ArrowRight size={16} />
-                  </button>
-                </div>
               </div>
 
               {/* Organizer */}
@@ -440,12 +426,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
                     <li key={item} className="flex items-start gap-2.5"><CheckCircle2 size={18} className="mt-px shrink-0 text-green-400" />{item}</li>
                   ))}
                 </ul>
-                <div className="mt-auto flex flex-wrap gap-2.5">
-                  <button onClick={onOrganizerRegister} className={`${primaryBtn} px-5 py-3 text-sm`}>
-                    Apply as organizer <ArrowRight size={16} />
-                  </button>
-                </div>
-                <p className="mt-4 flex items-center gap-1.5 text-xs text-white/60">
+                <p className="mt-auto flex items-center gap-1.5 text-xs text-white/60">
                   <Hourglass size={13} /> Applications are reviewed by the EcoTask admin before you can post activities.
                 </p>
               </div>
@@ -492,8 +473,8 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
 
               <div className="mt-8 space-y-5">
                 {[
-                  { icon: Mail, label: "Email", value: "ecotask@example.com" },
-                  { icon: Phone, label: "Phone", value: "+63 900 000 0000" },
+                  { icon: Mail, label: "Email", value: SUPPORT_EMAIL },
+                  { icon: Phone, label: "Phone", value: SUPPORT_PHONE },
                   { icon: MapPin, label: "Location", value: "Pangasinan, Philippines" },
                 ].map(({ icon, label, value }) => (
                   <div key={label} className="flex items-center gap-4">

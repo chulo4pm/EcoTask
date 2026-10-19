@@ -1,3 +1,4 @@
+import { SUPPORT_EMAIL } from "./contact";
 import {
   AlertCircle,
   ArrowLeft,
@@ -1058,9 +1059,6 @@ function Register({
                           ? "Terms & Conditions"
                           : "Privacy Policy"}
                       </h2>
-                      <p className="mt-1 text-xs text-[#6b7280]">
-                        Effective date: [Add your publication date]
-                      </p>
                     </div>
 
                     <button
@@ -1164,9 +1162,7 @@ function Register({
                           </h3>
                           <p>
                             We may update these terms when the service or its requirements
-                            change. We will post the updated version here with a new
-                            effective date. Questions can be sent to [Add your support
-                            email address].
+                            change. We will post the updated version here. Questions can be sent to {SUPPORT_EMAIL}.
                           </p>
                         </div>
                       </>
@@ -1248,9 +1244,7 @@ function Register({
                             6. Policy updates and contact
                           </h3>
                           <p>
-                            If this policy changes, the updated version will be posted
-                            here with a new effective date. For privacy questions or
-                            requests, contact [Add your privacy/support email address].
+                            If this policy changes, the updated version will be posted here. For privacy questions or requests, contact {SUPPORT_EMAIL}.
                           </p>
                         </div>
                       </>

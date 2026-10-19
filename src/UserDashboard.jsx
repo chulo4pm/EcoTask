@@ -1,5 +1,6 @@
 import volunteerImage from './assets/voluteer.jpg'
 import { jsPDF } from 'jspdf'
+import { formatTimeRange, getActivityStatus, hasActivityEnded, hasActivityStarted, useStatusRefresh } from './activityTime'
 
 const getActivityImageUrl = (image) => (
   image?.startsWith('/uploads/') ? `${API_BASE_URL}${image}` : image
@@ -10,15 +11,6 @@ const getDateKey = (dateValue) => {
   if (typeof dateValue === 'string') return dateValue.slice(0, 10)
   const date = new Date(dateValue)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
-const getActivityStatus = (dateValue) => {
-  const today = new Date()
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const activityKey = getDateKey(dateValue)
-  if (activityKey < todayKey) return 'Completed'
-  if (activityKey === todayKey) return 'Ongoing'
-  return 'Upcoming'
 }
 
 const isTomorrow = (dateValue) => {
@@ -854,6 +846,7 @@ function Dashboard({ goTo, displayName }) {
     certificatesEarned: 0,
   })
   const [activities, setActivities] = useState([])
+  useStatusRefresh(setActivities)
 
   useEffect(() => {
     const loadStats = async () => {
@@ -887,7 +880,7 @@ function Dashboard({ goTo, displayName }) {
           joined: (activity.participants || []).some((participant) => (
             (participant._id || participant).toString() === userInfo._id
           )),
-          status: getActivityStatus(activity.date),
+          status: getActivityStatus(activity),
         }))))
       } catch (error) {
         console.error(error)
@@ -1004,7 +997,7 @@ function Dashboard({ goTo, displayName }) {
                 key={activity._id}
                 date={activity.date}
                 title={activity.title}
-                time={activity.time || activity.tasks?.[0] || 'Time not specified'}
+                time={formatTimeRange(activity)}
                 location={activity.location}
               />
             ))}
@@ -1214,6 +1207,7 @@ function Activities({ goTo }) {
   ]
 
   const [activities, setActivities] = useState(fallbackActivities)
+  useStatusRefresh(setActivities)
 
   useEffect(() => {
     const loadActivities = async () => {
@@ -1231,7 +1225,9 @@ function Activities({ goTo }) {
           location: activity.location,
           landmark: activity.tasks?.[1] || 'Meeting place not specified',
           date: new Date(activity.date).toLocaleDateString(),
-          time: activity.tasks?.[0] || 'Time not specified',
+          time: formatTimeRange(activity),
+          startTime: activity.time || activity.tasks?.[0] || '',
+          endTime: activity.endTime || '',
           volunteers: `${activity.participants?.length || 0}/${activity.volunteerLimit} Volunteers Joined`,
           participantCount: activity.participants?.length || 0,
           volunteerLimit: activity.volunteerLimit,
@@ -1240,7 +1236,7 @@ function Activities({ goTo }) {
           participantIds: (activity.participants || []).map((participant) => (
             (participant._id || participant).toString()
           )),
-          status: getActivityStatus(activity.date),
+          status: getActivityStatus(activity),
           rawDate: activity.date,
           organizerName: activity.organizer?.organizationName || activity.organizer?.name || '',
         }))
@@ -1360,6 +1356,10 @@ function Activities({ goTo }) {
   // Registration closes when the activity day starts.
   const isClosedToday = (activity) => (
     activity.status === 'Ongoing' && !registeredActivities.includes(activity.id)
+  )
+  // Joined volunteers can cancel until the activity starts. After that they are committed.
+  const isLeaveClosed = (activity) => (
+    registeredActivities.includes(activity.id) && hasActivityStarted(activity)
   )
 
   return (
@@ -1487,6 +1487,8 @@ function Activities({ goTo }) {
                     </span>
                     {isClosedToday(activity) ? (
                       <span className="eco-badge border border-amber-200 bg-amber-50 text-amber-700">Registration closed</span>
+                    ) : !past && isLeaveClosed(activity) ? (
+                      <span className="eco-badge border border-amber-200 bg-amber-50 text-amber-700">Cancellation closed</span>
                     ) : !past && isFull(activity) && <span className="eco-badge eco-badge-red">Full</span>}
                   </div>
                   <div className="eco-progress"><span style={{ width: `${fillPercent}%` }} /></div>
@@ -1620,9 +1622,9 @@ function Activities({ goTo }) {
                   </button>
                   <button
                     type="button"
-                    disabled={isFull(selectedActivity) || isClosedToday(selectedActivity)}
+                    disabled={isFull(selectedActivity) || isClosedToday(selectedActivity) || isLeaveClosed(selectedActivity)}
                     onClick={() => {
-                      if (isFull(selectedActivity) || isClosedToday(selectedActivity)) return
+                      if (isFull(selectedActivity) || isClosedToday(selectedActivity) || isLeaveClosed(selectedActivity)) return
                       if (registeredActivities.includes(selectedActivity.id)) {
                         setCancelActivity(selectedActivity)
                       } else {
@@ -1631,14 +1633,16 @@ function Activities({ goTo }) {
                       setSelectedActivity(null)
                     }}
                     className={`eco-btn ${
-                      isFull(selectedActivity) || isClosedToday(selectedActivity)
+                      isFull(selectedActivity) || isClosedToday(selectedActivity) || isLeaveClosed(selectedActivity)
                         ? 'eco-btn-muted'
                         : registeredActivities.includes(selectedActivity.id)
                         ? 'eco-btn-danger-soft'
                         : 'eco-btn-primary'
                     }`}
                   >
-                    {isClosedToday(selectedActivity)
+                    {isLeaveClosed(selectedActivity)
+                      ? 'CANCELLATION CLOSED'
+                      : isClosedToday(selectedActivity)
                       ? 'REGISTRATION CLOSED'
                       : isFull(selectedActivity)
                       ? 'EVENT FULL'
@@ -1695,7 +1699,7 @@ function Activities({ goTo }) {
                 Cancel
               </button>
               <button onClick={() => joinActivity()} className="eco-btn eco-btn-primary px-6">
-                Yes, register
+                Yes, Register
               </button>
             </div>
           </div>
@@ -1848,6 +1852,7 @@ function ReportActivityModal({ activity, onClose, onReported }) {
 
 function Schedule() {
   const [events, setEvents] = useState([])
+  useStatusRefresh(setEvents)
 
   useEffect(() => {
     const loadSchedule = async () => {
@@ -1872,6 +1877,7 @@ function Schedule() {
             title: record.activityTitle,
             date: record.date,
             time: record.time,
+            endTime: record.endTime,
             location: record.location,
             participants: [userInfo._id],
             volunteerLimit: 1,
@@ -1883,10 +1889,12 @@ function Schedule() {
             date: activity.date,
             dateKey: getDateKey(activity.date),
             title: activity.title || 'Untitled activity',
-            time: activity.time || activity.tasks?.[0] || 'Time not specified',
+            time: formatTimeRange(activity),
+            startTime: activity.time || activity.tasks?.[0] || '',
+            endTime: activity.endTime || '',
             location: activity.location || 'Location not specified',
             description: activity.description || '',
-            status: getActivityStatus(activity.date),
+            status: getActivityStatus(activity),
             participantCount: activity.participants?.length || activity.participantCount || 0,
             volunteerLimit: activity.volunteerLimit,
             joined: joinedActivityIds.has(String(activity._id)) ||
@@ -2107,10 +2115,8 @@ function Records() {
 
   // Activities that haven't happened yet stay on My Schedule. Once an activity has happened it
   // shows here as "Pending" until the organizer finalizes attendance.
-  const endOfToday = new Date()
-  endOfToday.setHours(23, 59, 59, 999)
   const history = records
-    .filter((record) => record.attendance || (record.date && new Date(record.date) <= endOfToday))
+    .filter((record) => record.attendance || (record.date && hasActivityEnded(record)))
     .sort((x, y) => new Date(y.date || 0) - new Date(x.date || 0))
   const attendedCount = history.filter((record) => record.attendance === 'present').length
   const missedCount = history.filter((record) => record.attendance === 'absent').length

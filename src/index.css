@@ -570,6 +570,16 @@ body {
     border-bottom: 0;
   }
 
+  /* On phones, wide admin tables turn each row into a card so the action buttons stay on screen. */
+  @media (max-width: 639px) {
+    .eco-table-stack, .eco-table-stack tbody, .eco-table-stack tr, .eco-table-stack td { display: block; width: 100%; }
+    .eco-table-stack thead { display: none; }
+    .eco-table-stack tbody tr { border: 1px solid #e3ede3; border-radius: 0.9rem; margin-bottom: 0.75rem; padding: 0.35rem 0; background: #fff; }
+    .eco-table-stack tbody td { border-bottom: 0; padding: 0.4rem 0.9rem; text-align: left !important; }
+    .eco-table-stack tbody td:last-child { padding-bottom: 0.7rem; }
+    .eco-table-stack td .justify-end { justify-content: flex-start; }
+  }
+
   /* ---------- Avatar ---------- */
   .eco-avatar {
     display: inline-flex;
@@ -604,6 +614,14 @@ body {
     background: rgb(7 32 10 / 0.45);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    /* A modal taller than the screen (small phones) scrolls instead of being cut off. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Auto margins keep short modals centered, and let tall ones start at the top edge. */
+  .eco-modal-backdrop > .eco-modal {
+    margin-block: auto;
   }
 
   .eco-modal {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatTimeRange, getActivityStatus, useClockTick } from './activityTime';
 import {
   Activity,
   Award,
@@ -53,15 +54,6 @@ const getDateKey = (dateValue) => {
   if (typeof dateValue === 'string') return dateValue.slice(0, 10);
   const date = new Date(dateValue);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-const getActivityStatus = (dateValue) => {
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const activityKey = getDateKey(dateValue);
-  if (activityKey < todayKey) return 'Completed';
-  if (activityKey === todayKey) return 'Ongoing';
-  return 'Upcoming';
 };
 
 const sortActivitiesByStatus = (activities) => {
@@ -210,6 +202,7 @@ export default function AdminDashboard({ onLogout }) {
               storageKey="adminInfo"
               onOpen={(item) => {
                 if (item.type === 'organizer_application') setActiveTab('Organizer Approvals');
+                else if (item.type === 'report_submitted') setActiveTab('Reports');
                 else setActiveTab('Dashboard');
               }}
             />
@@ -344,6 +337,7 @@ function DashboardView({ goTo }) {
   const [showAllAuditLogs, setShowAllAuditLogs] = useState(false);
   const [topVolunteers, setTopVolunteers] = useState([]);
   const [topVolunteersLoading, setTopVolunteersLoading] = useState(true);
+  const [trendTab, setTrendTab] = useState('volunteers');
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -394,12 +388,12 @@ function DashboardView({ goTo }) {
     const loadTopVolunteers = async () => {
       try {
         const adminInfo = JSON.parse(localStorage.getItem('adminInfo') || '{}');
-        const response = await fetch(`${API_BASE_URL}/api/dashboard/top-volunteers?limit=5`, {
+        const response = await fetch(`${API_BASE_URL}/api/dashboard/top-volunteers?limit=3`, {
           headers: { Authorization: `Bearer ${adminInfo.token}` },
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Unable to load top volunteers');
-        setTopVolunteers(data);
+        setTopVolunteers(Array.isArray(data) ? data.slice(0, 3) : []);
       } catch (requestError) {
         setStatsError(requestError.message);
       } finally {
@@ -416,16 +410,23 @@ function DashboardView({ goTo }) {
     { label: 'CERTIFICATES ISSUED', value: statsData.certificatesIssued, change: 'From database', icon: Award },
   ];
 
-  // Chart: y-axis labels scale to the busiest month instead of a fixed 600/400/200.
+  // Trend chart: one card with tabs. y-axis labels scale to the busiest month.
   const CHART_BAR_MAX_PX = 167; // bar area height inside the h-48 chart
-  const monthlyRegistrations = statsData.monthlyRegistrations || [];
-  const maxCount = Math.max(...monthlyRegistrations.map((entry) => entry.count), 0);
+  const TREND_TABS = [
+    { key: 'volunteers', label: 'Volunteers', title: 'Volunteer Registration Trend', unit: 'new volunteers', field: 'monthlyRegistrations' },
+    { key: 'organizers', label: 'Organizers', title: 'Organizer Trend', unit: 'new organizers', field: 'monthlyOrganizers' },
+    { key: 'activities', label: 'Activities', title: 'Activity Trend', unit: 'activities created', field: 'monthlyActivities' },
+  ];
+  const activeTrend = TREND_TABS.find((tab) => tab.key === trendTab) || TREND_TABS[0];
+  const monthlySeries = statsData[activeTrend.field] || [];
+  const maxCount = Math.max(...monthlySeries.map((entry) => entry.count), 0);
   const axisStep = Math.max(1, Math.ceil(maxCount / 3));
   const axisMax = axisStep * 3;
   const axisLabels = [axisMax, axisStep * 2, axisStep, 0];
+  const trendTotal = monthlySeries.reduce((sum, entry) => sum + entry.count, 0);
 
   const chartData = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month) => {
-    const item = monthlyRegistrations.find((entry) => entry.month.slice(0, 3).toLowerCase() === month.toLowerCase());
+    const item = monthlySeries.find((entry) => entry.month.slice(0, 3).toLowerCase() === month.toLowerCase());
     const count = item?.count || 0;
     const height = Math.max(4, Math.round((count / axisMax) * CHART_BAR_MAX_PX));
     return { month: month.toUpperCase(), count, height: `${height}px` };
@@ -522,8 +523,26 @@ function DashboardView({ goTo }) {
             icon={Activity}
             right={<span className="eco-badge eco-badge-green">Year {new Date().getFullYear()}</span>}
           >
-            Volunteer Registration Trend
+            {activeTrend.title}
           </CardTitle>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
+            <div className="inline-flex rounded-full bg-eco-50 p-1 ring-1 ring-eco-100" role="tablist" aria-label="Trend type">
+              {TREND_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={trendTab === tab.key}
+                  onClick={() => setTrendTab(tab.key)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${trendTab === tab.key ? 'bg-eco-700 text-white shadow' : 'text-eco-800 hover:bg-eco-100'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs font-semibold text-slate-500"><span className="text-base font-extrabold text-eco-800">{trendTotal}</span> {activeTrend.unit} this year</p>
+          </div>
 
           <div className="flex-1 p-5">
             <div className="relative flex h-48 items-end justify-between gap-1 px-1 pb-1 sm:gap-2">
@@ -1014,7 +1033,7 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
   }, [onClose]);
 
   const activity = data?.activity;
-  const status = activity ? getActivityStatus(activity.date) : '';
+  const status = activity ? getActivityStatus(activity) : '';
   const organizerName = activity?.organizer ? (activity.organizer.organizationName || activity.organizer.name) : 'No organizer';
   const openReports = (data?.reports || []).filter((r) => r.status === 'open').length;
 
@@ -1063,7 +1082,7 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
 
             <div className="grid grid-cols-2 gap-2 text-xs">
               {[
-                { label: 'When', value: `${new Date(activity.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}${activity.time ? ` · ${activity.time}` : ''}` },
+                { label: 'When', value: `${new Date(activity.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}${activity.time ? ` · ${formatTimeRange(activity)}` : ''}` },
                 { label: 'Where', value: activity.location || '—' },
                 { label: 'Meeting place', value: activity.meetingPlace || '—' },
                 { label: 'Sign-ups', value: `${activity.participantCount} of ${activity.volunteerLimit}` },
@@ -1146,6 +1165,7 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
 }
 
 function ActivityOversightView() {
+  useClockTick();
   const [activities, setActivities] = useState([]);
   const [organizers, setOrganizers] = useState([]);
   const [assignChoice, setAssignChoice] = useState({});
@@ -1206,7 +1226,7 @@ function ActivityOversightView() {
   };
 
   // Two separate lists. Active: today first, then the soonest. Past: the most recent first.
-  const isPast = (a) => getActivityStatus(a.date) === 'Completed';
+  const isPast = (a) => getActivityStatus(a) === 'Completed';
   const activeActivities = sortActivitiesByStatus(activities.filter((a) => !isPast(a)));
   const pastActivities = sortActivitiesByStatus(activities.filter(isPast)).reverse();
 
@@ -1231,8 +1251,8 @@ function ActivityOversightView() {
   ));
 
   // Summary tiles
-  const upcoming = activeActivities.filter((a) => getActivityStatus(a.date) === 'Upcoming');
-  const today = activeActivities.filter((a) => getActivityStatus(a.date) === 'Ongoing');
+  const upcoming = activeActivities.filter((a) => getActivityStatus(a) === 'Upcoming');
+  const today = activeActivities.filter((a) => getActivityStatus(a) === 'Ongoing');
   const attention = activeActivities.filter(needsAttention);
   const hiddenCount = activities.filter(isHiddenActivity).length;
 
@@ -1307,7 +1327,7 @@ function ActivityOversightView() {
         </div>
 
         <div className="eco-scroll overflow-x-auto p-3">
-          <table className="eco-table min-w-[900px]">
+          <table className="eco-table eco-table-stack sm:min-w-[900px]">
             <thead>
               <tr>
                 <th>Activity</th>
@@ -1326,7 +1346,7 @@ function ActivityOversightView() {
                 const low = listView === 'active' && isLowSignup(activity);
                 const attentionRow = listView === 'active' && needsAttention(activity);
                 return (
-                <tr key={activity._id} className={getActivityStatus(activity.date) === 'Ongoing' ? 'bg-eco-50/50' : ''}>
+                <tr key={activity._id} className={getActivityStatus(activity) === 'Ongoing' ? 'bg-eco-50/50' : ''}>
                   <td className={attentionRow ? 'shadow-[inset_3px_0_0_#f59e0b]' : ''}>
                     <p className="font-bold text-slate-800">{activity.title}</p>
                     <p className="text-xs text-slate-500">{whenLabel(activity)}</p>
@@ -1472,7 +1492,7 @@ function ActivityDetailsModal({ activityId, onClose, footer }) {
           {activity && (
             <div className="absolute inset-x-0 bottom-0 p-5">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="eco-badge eco-badge-green capitalize">{activity.status || getActivityStatus(activity.date)}</span>
+                <span className="eco-badge eco-badge-green capitalize">{activity.status || getActivityStatus(activity)}</span>
                 {activity.isHidden && <span className="eco-badge eco-badge-red">Hidden</span>}
                 {activity.hiddenBySuspension && <span className="eco-badge eco-badge-gray">Organizer suspended</span>}
               </div>
@@ -1496,7 +1516,7 @@ function ActivityDetailsModal({ activityId, onClose, footer }) {
             <div className="grid grid-cols-1 gap-2.5 text-xs sm:grid-cols-2">
               {[
                 { icon: Building2, label: 'Organizer', value: organizer?.organizationName || organizer?.name || 'Unassigned' },
-                { icon: Calendar, label: 'Date & time', value: `${new Date(activity.date).toLocaleDateString(undefined, { dateStyle: 'medium' })}${activity.time ? ` · ${activity.time}` : ''}` },
+                { icon: Calendar, label: 'Date & time', value: `${new Date(activity.date).toLocaleDateString(undefined, { dateStyle: 'medium' })}${activity.time ? ` · ${formatTimeRange(activity)}` : ''}` },
                 { icon: Home, label: 'Location', value: activity.location || '—' },
                 { icon: Flag, label: 'Meeting place', value: activity.meetingPlace || '—' },
                 { icon: Users, label: 'Volunteers', value: `${participants.length} / ${activity.volunteerLimit}` },
@@ -1720,6 +1740,7 @@ function ReportsView() {
           {['open', 'dismissed', 'actioned', 'all'].map((key) => (
             <button key={key} type="button" onClick={() => setFilter(key)} className={`eco-chip capitalize ${filter === key ? 'eco-chip-active' : ''}`}>
               {key === 'actioned' ? 'Hidden' : key}
+              {summary?.totals && <span className="eco-chip-count">{summary.totals[key]}</span>}
             </button>
           ))}
         </div>
@@ -2119,8 +2140,11 @@ function OrganizerManagementView() {
     afterAction(data.message);
   };
 
-  const remove = async () => {
-    const data = await adminFetch(`/api/admin/organizers/${deleteTarget._id}`, { method: 'DELETE' });
+  const remove = async (reason) => {
+    const data = await adminFetch(`/api/admin/organizers/${deleteTarget._id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason }),
+    });
     setDetailsId(null);
     afterAction(data.message);
   };
@@ -2170,7 +2194,7 @@ function OrganizerManagementView() {
         </div>
 
         <div className="eco-scroll overflow-x-auto p-3">
-          <table className="eco-table min-w-[820px]">
+          <table className="eco-table eco-table-stack sm:min-w-[820px]">
             <thead>
               <tr>
                 <th>Organization</th>
@@ -2276,7 +2300,10 @@ function OrganizerManagementView() {
       {deleteTarget && (
         <ReasonModal
           title={`Delete ${orgName(deleteTarget)}?`}
-          description={`The account and uploaded documents are removed permanently. Their ${deleteTarget.activityCount || 0} activit${deleteTarget.activityCount === 1 ? 'y' : 'ies'} will be kept but hidden and unassigned. You can assign them to another organizer in Activity Oversight. This cannot be undone.`}
+          description={`The account and uploaded documents are removed permanently, and so are their ${deleteTarget.activityCount || 0} activit${deleteTarget.activityCount === 1 ? 'y' : 'ies'} (with sign-ups and reports). Every volunteer who joined will be notified with your reason. This cannot be undone.`}
+          label="Reason (shown to the volunteers)"
+          placeholder="e.g. The organizer violated our policy, so their activities were removed."
+          required
           confirmLabel="Delete organizer"
           danger
           onConfirm={remove}
@@ -2629,7 +2656,7 @@ function VolunteerManagementView() {
         </div>
 
         <div className="eco-scroll overflow-x-auto p-3">
-          <table className="eco-table min-w-[760px]">
+          <table className="eco-table eco-table-stack sm:min-w-[760px]">
             <thead>
               <tr>
                 <th>Volunteer</th>
@@ -2853,6 +2880,11 @@ const ANNOUNCEMENT_AUDIENCES = [
   { value: 'General', label: 'General', hint: 'Volunteers and organizers see it.' },
 ];
 const ANNOUNCEMENT_CATEGORIES = ANNOUNCEMENT_AUDIENCES.map((a) => a.value);
+// Posted announcements list: General first.
+const ANNOUNCEMENT_FILTER_ORDER = [
+  ...ANNOUNCEMENT_AUDIENCES.filter((a) => a.value === 'General'),
+  ...ANNOUNCEMENT_AUDIENCES.filter((a) => a.value !== 'General'),
+];
 const AUDIENCE_BADGE = {
   Volunteer: { label: 'Volunteers', className: 'eco-badge eco-badge-green', bar: 'from-eco-400 to-eco-700' },
   Organizer: { label: 'Organizers', className: 'eco-badge eco-badge-blue', bar: 'from-sky-300 to-sky-600' },
@@ -3159,7 +3191,7 @@ function AnnouncementsView() {
         </CardTitle>
 
         <div className="flex flex-wrap gap-2 border-b border-eco-100 px-4 py-3">
-          {[{ value: 'all', label: 'All' }, ...ANNOUNCEMENT_AUDIENCES].map((option) => (
+          {[{ value: 'all', label: 'All' }, ...ANNOUNCEMENT_FILTER_ORDER].map((option) => (
             <button
               key={option.value}
               type="button"

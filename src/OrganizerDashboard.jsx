@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
 import {
   Activity,
   ArrowLeft,
@@ -65,22 +66,6 @@ const getOrganizerInfo = () => {
 const getActivityImageUrl = (image) => (
   image?.startsWith('/uploads/') ? `${API_BASE_URL}${image}` : image
 );
-
-const getDateKey = (dateValue) => {
-  if (!dateValue) return '';
-  if (typeof dateValue === 'string') return dateValue.slice(0, 10);
-  const date = new Date(dateValue);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-const getActivityStatus = (dateValue) => {
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const activityKey = getDateKey(dateValue);
-  if (activityKey < todayKey) return 'Completed';
-  if (activityKey === todayKey) return 'Ongoing';
-  return 'Upcoming';
-};
 
 const sortActivitiesByStatus = (activities) => {
   const getTimeInMinutes = (activity) => {
@@ -463,6 +448,8 @@ function OrganizerWorkspace({ account, onLogout }) {
                 setActiveTab('Manage Activities');
               } else if (item.type === 'activity_hidden' || item.type === 'activity_unhidden') {
                 setActiveTab('Manage Activities');
+              } else if (item.type === 'activity_reported') {
+                setActiveTab('Reports');
               } else if (item.type === 'announcement') {
                 setActiveTab('Announcements');
               } else {
@@ -555,6 +542,7 @@ const timeAgo = (value) => {
 };
 
 function OrganizerHomeView({ goTo }) {
+  useClockTick();
   const [stats, setStats] = useState(null);
   const [activities, setActivities] = useState([]);
   const [error, setError] = useState('');
@@ -579,11 +567,11 @@ function OrganizerHomeView({ goTo }) {
     load();
   }, []);
 
-  const upcoming = activities.filter((activity) => getActivityStatus(activity.date) !== 'Completed').slice(0, 5);
+  const upcoming = activities.filter((activity) => getActivityStatus(activity) !== 'Completed').slice(0, 5);
   const attention = stats?.needsAttention || [];
   const feed = stats?.recentActivity || [];
   // Bars: how many volunteers joined each of the last 6 activities that have started.
-  const chartActivities = activities.filter((a) => getActivityStatus(a.date) !== 'Upcoming').slice(-6);
+  const chartActivities = activities.filter((a) => getActivityStatus(a) !== 'Upcoming').slice(-6);
   const chartMax = Math.max(1, ...chartActivities.map((a) => a.participants?.length || 0));
 
   const attentionRow = (item) => {
@@ -927,6 +915,7 @@ const EMPTY_ACTIVITY_FORM = {
   description: '',
   date: '',
   time: '',
+  endTime: '',
   location: '',
   meetingPlace: '',
   coverImage: '',
@@ -1002,6 +991,14 @@ const validateActivityField = (name, value, form, opts = {}) => {
       return '';
     }
 
+    case 'endTime': {
+      if (!text) return 'Please select an end time.';
+      if (!TIME_OPTIONS.some((o) => o.label === text)) return 'Please pick a time from the list.';
+      const start = parseTimeLabel(form.time);
+      if (start !== null && parseTimeLabel(text) <= start) return 'End time must be later than the start time.';
+      return '';
+    }
+
     case 'location':
       if (!text) return 'Location is required.';
       if (text.length < L.placeMin) return `Location must be at least ${L.placeMin} characters.`;
@@ -1019,7 +1016,7 @@ const validateActivityField = (name, value, form, opts = {}) => {
   }
 };
 
-const ACTIVITY_FIELDS = ['title', 'volunteerLimit', 'description', 'date', 'time', 'location', 'meetingPlace'];
+const ACTIVITY_FIELDS = ['title', 'volunteerLimit', 'description', 'date', 'time', 'endTime', 'location', 'meetingPlace'];
 
 const validateActivityForm = (form, opts = {}) => {
   const errors = {};
@@ -1068,6 +1065,7 @@ function CreateActivityView() {
       const updated = { ...prevErrors, [name]: validateActivityField(name, value, next) };
       // Changing the date can make the selected time valid/invalid
       if (name === 'date' && next.time) updated.time = validateActivityField('time', next.time, next);
+      if (name === 'time' && next.endTime) updated.endTime = validateActivityField('endTime', next.endTime, next);
       return updated;
     });
   };
@@ -1140,6 +1138,7 @@ function CreateActivityView() {
       body.append('location', formData.location.trim());
       body.append('date', formData.date);
       body.append('time', formData.time);
+      body.append('endTime', formData.endTime);
       body.append('meetingPlace', formData.meetingPlace.trim());
       body.append('tasks', JSON.stringify([formData.time, formData.meetingPlace.trim()].filter(Boolean)));
       body.append('volunteerLimit', String(Number(formData.volunteerLimit)));
@@ -1252,7 +1251,7 @@ function CreateActivityView() {
 
           <div className="border-t border-eco-100 pt-6">
             <h3 className="mb-3 text-xs font-extrabold uppercase tracking-[0.1em] text-eco-700">Schedule & location</h3>
-            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <label className="eco-label">Date <span className="text-rose-600">*</span></label>
                 <input
@@ -1268,7 +1267,7 @@ function CreateActivityView() {
                 <FieldError message={shownError('date')} />
               </div>
               <div>
-                <label className="eco-label">Time <span className="text-rose-600">*</span></label>
+                <label className="eco-label">Start time <span className="text-rose-600">*</span></label>
                 <select
                   name="time"
                   value={formData.time}
@@ -1283,6 +1282,24 @@ function CreateActivityView() {
                   })}
                 </select>
                 <FieldError message={shownError('time')} />
+              </div>
+              <div>
+                <label className="eco-label">End time <span className="text-rose-600">*</span></label>
+                <select
+                  name="endTime"
+                  value={formData.endTime}
+                  onChange={handleChange}
+                  onBlur={handleBlur}
+                  className={`eco-input cursor-pointer ${inputState(shownError('endTime'))}`}
+                >
+                  <option value="">Select end time</option>
+                  {TIME_OPTIONS.map(({ label, hour }) => {
+                    const startMinutes = parseTimeLabel(formData.time);
+                    const beforeStart = startMinutes !== null && hour * 60 <= startMinutes;
+                    return <option key={label} value={label} disabled={beforeStart}>{label}{beforeStart ? ' (before start)' : ''}</option>;
+                  })}
+                </select>
+                <FieldError message={shownError('endTime')} />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1395,7 +1412,7 @@ function CreateActivityView() {
               <p className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-eco-600" /> <span className="truncate">{formData.location || 'Location'}</span></p>
               <p className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 shrink-0 text-eco-600" /> {formData.date || 'Date'}</p>
               <p className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-eco-600" /> <span className="truncate">{formData.meetingPlace || 'Meeting place'}</span></p>
-              <p className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 shrink-0 text-eco-600" /> {formData.time || 'Time'}</p>
+              <p className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 shrink-0 text-eco-600" /> {formData.time ? formatTimeRange(formData) : 'Time'}</p>
             </div>
 
             <p className="mt-4 max-w-full rounded-xl border border-slate-100 bg-slate-50/80 px-3.5 py-3 text-left text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">
@@ -1444,6 +1461,7 @@ function CreateActivityView() {
    MANAGE ACTIVITIES VIEW
    ========================================== */
 function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVolunteersOpened }) {
+  useClockTick();
   const [selectedActivityForVolunteers, setSelectedActivityForVolunteers] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -1482,8 +1500,8 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
     loadActivities();
   }, []);
 
-  const displayStatus = (activity) => getActivityStatus(activity.date);
-  const getTime = (activity) => activity.tasks?.[0] || activity.time || 'Time not specified';
+  const displayStatus = (activity) => getActivityStatus(activity);
+  const getTime = (activity) => formatTimeRange(activity);
   const getMeeting = (activity) => activity.tasks?.[1] || activity.meeting || 'Meeting place not specified';
   // Two separate lists: activities still to come ("active") and finished ones ("past").
   const matchesSearch = (act) => `${act.title} ${act.location}`.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1578,6 +1596,7 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
       description: activity.description || '',
       date: activity.date ? toInputDate(new Date(activity.date)) : '',
       time: cleanValue(activity.time || activity.tasks?.[0], 'Time not specified'),
+      endTime: activity.endTime || '',
       location: activity.location || '',
       meetingPlace: cleanValue(activity.meetingPlace || activity.tasks?.[1], 'Meeting place not specified'),
     };
@@ -1616,6 +1635,7 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
     setEditErrors((prev) => {
       const updated = { ...prev, [name]: validateActivityField(name, value, next, editRules()) };
       if (name === 'date' && next.time) updated.time = validateActivityField('time', next.time, next, editRules());
+      if (name === 'time' && next.endTime) updated.endTime = validateActivityField('endTime', next.endTime, next, editRules());
       return updated;
     });
   };
@@ -1677,6 +1697,7 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
       body.append('location', editingActivity.location.trim());
       body.append('meetingPlace', meetingPlace);
       body.append('time', editingActivity.time);
+      body.append('endTime', editingActivity.endTime);
       body.append('tasks', JSON.stringify([editingActivity.time, meetingPlace].filter(Boolean)));
       body.append('date', editingActivity.date);
       body.append('volunteerLimit', String(Number(editingActivity.volunteerLimit)));
@@ -2003,6 +2024,19 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
                 </div>
 
                 <div>
+                  <label className="eco-label mb-0">End time <Req /></label>
+                  <select {...field('endTime')} className={`${field('endTime').className} cursor-pointer`}>
+                    <option value="">Select end time</option>
+                    {TIME_OPTIONS.map(({ label, hour }) => {
+                      const startMinutes = parseTimeLabel(editingActivity.time);
+                      const beforeStart = startMinutes !== null && hour * 60 <= startMinutes;
+                      return <option key={label} value={label} disabled={beforeStart}>{label}{beforeStart ? ' (before start)' : ''}</option>;
+                    })}
+                  </select>
+                  <FieldError message={shownEditError('endTime')} />
+                </div>
+
+                <div>
                   <label className="eco-label mb-0">Location & landmark <Req /></label>
                   <input type="text" maxLength={L.placeMax} {...field('location')} />
                   <FieldError message={shownEditError('location')} />
@@ -2214,8 +2248,8 @@ const summarizeParticipants = (records) => {
 const sortForAttendance = (activities) => {
   const rank = { Ongoing: 0, Upcoming: 1, Completed: 2 };
   return [...activities].sort((a, b) => {
-    const statusA = getActivityStatus(a.date);
-    const statusB = getActivityStatus(b.date);
+    const statusA = getActivityStatus(a);
+    const statusB = getActivityStatus(b);
     if (statusA !== statusB) return rank[statusA] - rank[statusB];
     const diff = new Date(a.date) - new Date(b.date);
     return statusA === 'Completed' ? -diff : diff;
@@ -2223,7 +2257,7 @@ const sortForAttendance = (activities) => {
 };
 
 const needsAttendance = (activity) => {
-  const status = getActivityStatus(activity.date);
+  const status = getActivityStatus(activity);
   const { unmarked } = getAttendanceSummary(activity);
   return status !== 'Upcoming' && unmarked > 0;
 };
@@ -2231,9 +2265,9 @@ const needsAttendance = (activity) => {
 // Open on the most useful activity: today's, then the latest completed one with
 // unmarked volunteers, then the next upcoming one, then whatever is first.
 const pickDefaultActivity = (sorted) => (
-  sorted.find((a) => getActivityStatus(a.date) === 'Ongoing')
+  sorted.find((a) => getActivityStatus(a) === 'Ongoing')
   || sorted.find(needsAttendance)
-  || sorted.find((a) => getActivityStatus(a.date) === 'Upcoming')
+  || sorted.find((a) => getActivityStatus(a) === 'Upcoming')
   || sorted[0]
 );
 
@@ -2244,6 +2278,7 @@ const STATUS_BADGE = {
 };
 
 function ParticipationRecordView() {
+  useClockTick();
   const [activities, setActivities] = useState([]);
   const [selectedActivity, setSelectedActivity] = useState('');
   const [listFilter, setListFilter] = useState('All');
@@ -2429,14 +2464,14 @@ function ParticipationRecordView() {
   const filterCounts = {
     All: activities.length,
     'Needs attendance': activities.filter(needsAttendance).length,
-    Today: activities.filter((a) => getActivityStatus(a.date) === 'Ongoing').length,
-    Upcoming: activities.filter((a) => getActivityStatus(a.date) === 'Upcoming').length,
-    Completed: activities.filter((a) => getActivityStatus(a.date) === 'Completed').length,
+    Today: activities.filter((a) => getActivityStatus(a) === 'Ongoing').length,
+    Upcoming: activities.filter((a) => getActivityStatus(a) === 'Upcoming').length,
+    Completed: activities.filter((a) => getActivityStatus(a) === 'Completed').length,
   };
 
   const listQuery = listSearch.trim().toLowerCase();
   const visibleActivities = activities.filter((a) => {
-    const status = getActivityStatus(a.date);
+    const status = getActivityStatus(a);
     const matchesFilter = listFilter === 'All'
       || (listFilter === 'Needs attendance' && needsAttendance(a))
       || (listFilter === 'Today' && status === 'Ongoing')
@@ -2452,14 +2487,16 @@ function ParticipationRecordView() {
   const attended = totals.present;
   const attendanceRate = totals.total > 0 ? Math.round((attended / totals.total) * 100) : 0;
   const activeActivity = activities.find((activity) => activity._id === selectedActivity);
-  const activeStatus = activeActivity ? getActivityStatus(activeActivity.date) : null;
+  const activeStatus = activeActivity ? getActivityStatus(activeActivity) : null;
   const isFinalized = Boolean(activeActivity?.attendanceFinalized);
   const newCertificates = participants.filter((p) => p.attendance === 'present' && !p.certificateIssued).length;
-  const canFinalize = activeStatus !== 'Upcoming'
+  // Attendance can only be finalized once the activity has ended, and it is locked afterwards.
+  const hasEnded = activeStatus === 'Completed';
+  const canFinalize = hasEnded
     && totals.total > 0
     && totals.unmarked === 0
-    && (!isFinalized || newCertificates > 0);
-  const stepsDone = activeStatus === 'Upcoming' ? 0 : (isFinalized && newCertificates === 0 ? 3 : 1);
+    && !isFinalized;
+  const stepsDone = activeStatus === 'Upcoming' ? 0 : (isFinalized ? 3 : 1);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 text-slate-800">
@@ -2507,7 +2544,7 @@ function ParticipationRecordView() {
 
           <ul className="eco-scroll max-h-72 divide-y divide-eco-100 overflow-y-auto lg:max-h-[560px]">
             {visibleActivities.map((activity) => {
-              const status = getActivityStatus(activity.date);
+              const status = getActivityStatus(activity);
               const badge = STATUS_BADGE[status];
               const summary = getAttendanceSummary(activity);
               const marked = summary.unmarked === null ? null : summary.total - summary.unmarked;
@@ -2566,7 +2603,7 @@ function ParticipationRecordView() {
                 {activeStatus && <span className={`eco-badge ${STATUS_BADGE[activeStatus].className}`}>{STATUS_BADGE[activeStatus].label}</span>}
               </div>
               <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
-                <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-eco-600" /> {activeActivity?.date ? new Date(activeActivity.date).toLocaleDateString() : '-'}{activeActivity?.time ? ` · ${activeActivity.time}` : ''}</span>
+                <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-eco-600" /> {activeActivity?.date ? new Date(activeActivity.date).toLocaleDateString() : '-'}{activeActivity ? ` · ${formatTimeRange(activeActivity)}` : ''}</span>
                 <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-eco-600" /> {activeActivity?.location || '-'}</span>
               </p>
             </div>
@@ -2586,7 +2623,7 @@ function ParticipationRecordView() {
           {activeStatus !== 'Upcoming' && participants.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-eco-100 bg-eco-50/40 px-5 py-3 text-xs font-bold">
               {[
-                { n: 1, label: 'Activity ended', done: true },
+                { n: 1, label: 'Activity ended', done: hasEnded },
                 { n: 2, label: 'Mark attendance', done: totals.unmarked === 0 },
                 { n: 3, label: 'Finalize & issue certificates', done: stepsDone === 3 },
               ].map((step, index, all) => {
@@ -2622,11 +2659,11 @@ function ParticipationRecordView() {
           )}
 
           <div className="eco-scroll overflow-x-auto p-3">
-            <table className="eco-table min-w-[560px]">
+            <table className="eco-table sm:min-w-[560px]">
               <thead>
                 <tr>
                   <th>Registered Participant</th>
-                  <th>Date Joined</th>
+                  <th className="hidden sm:table-cell">Date Joined</th>
                   <th>Attendance</th>
                 </tr>
               </thead>
@@ -2642,7 +2679,7 @@ function ParticipationRecordView() {
                           <span className="font-bold text-slate-800">{p.user?.name}</span>
                         </div>
                       </td>
-                      <td className="text-slate-500">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '-'}</td>
+                      <td className="hidden text-slate-500 sm:table-cell">{p.joinedAt ? new Date(p.joinedAt).toLocaleDateString() : '-'}</td>
                       <td>
                         <div className="inline-flex overflow-hidden rounded-xl border border-eco-200 bg-white text-xs font-bold">
                           {[
@@ -2652,7 +2689,8 @@ function ParticipationRecordView() {
                             <button
                               key={option.value}
                               type="button"
-                              disabled={activeStatus === 'Upcoming'}
+                              disabled={activeStatus === 'Upcoming' || isFinalized}
+                              title={isFinalized ? 'Attendance is finalized and locked' : undefined}
                               onClick={() => p.attendance !== option.value && handleAttendanceChange(p._id, option.value)}
                               className={`px-3.5 py-2 transition disabled:cursor-not-allowed disabled:opacity-50 ${
                                 p.attendance === option.value ? option.active : 'text-slate-500 hover:bg-eco-50'
@@ -2682,10 +2720,15 @@ function ParticipationRecordView() {
               <p className="text-xs text-slate-500">
                 <span className="font-bold text-slate-800">{totals.present} present</span> · {totals.absent} absent ·{' '}
                 <span className={`font-bold ${totals.unmarked > 0 ? 'text-amber-700' : 'text-slate-800'}`}>{totals.unmarked} not marked</span>
-                <br />Marks save automatically.
+                <br />
+                {isFinalized
+                  ? 'Attendance is finalized and can no longer be changed.'
+                  : hasEnded
+                    ? 'Marks save automatically.'
+                    : `Marks save automatically. You can finalize after the activity ends${activeActivity?.endTime ? ` at ${activeActivity.endTime}` : ' (end of the day)'}.`}
               </p>
               <div className="flex flex-wrap gap-2">
-                {totals.unmarked > 0 && (
+                {totals.unmarked > 0 && !isFinalized && (
                   <button type="button" onClick={markAllPresent} className="eco-btn eco-btn-secondary">
                     <UserCheck className="h-4 w-4" /> Mark all present
                   </button>
@@ -2697,9 +2740,7 @@ function ParticipationRecordView() {
                   className="eco-btn eco-btn-primary"
                 >
                   <Award className="h-4 w-4" />
-                  {isFinalized
-                    ? (newCertificates > 0 ? `Issue ${newCertificates} new certificate${newCertificates === 1 ? '' : 's'}` : 'Finalized')
-                    : 'Finalize & issue certificates'}
+                  {isFinalized ? 'Finalized' : 'Finalize & issue certificates'}
                 </button>
               </div>
             </div>
@@ -2723,7 +2764,7 @@ function ParticipationRecordView() {
                   {done ? <CheckCircle2 className="h-6 w-6" /> : <Award className="h-6 w-6" />}
                 </span>
                 <h3 id="finalize-attendance-title" className="mt-4 text-lg font-extrabold text-slate-800">
-                  {done ? 'Attendance finalized' : isFinalized ? 'Issue new certificates?' : 'Finalize attendance?'}
+                  {done ? 'Attendance finalized' : 'Finalize attendance?'}
                 </h3>
                 <p className="mt-1 text-sm font-semibold text-slate-700 [overflow-wrap:anywhere]">{activeActivity?.title}</p>
               </div>
@@ -2738,9 +2779,9 @@ function ParticipationRecordView() {
                     <p className="font-bold">This will:</p>
                     <ul className="mt-1 list-disc space-y-0.5 pl-5">
                       <li>Issue certificates to <span className="font-bold">{newCertificates} present volunteer{newCertificates === 1 ? '' : 's'}</span></li>
-                      {!isFinalized && <li>Show final attendance to all volunteers</li>}
+                      <li>Show final attendance to all volunteers</li>
                     </ul>
-                    <p className="mt-2">You can still edit marks later and issue certificates to anyone newly marked present.</p>
+                    <p className="mt-2 font-semibold">Attendance will be locked. You won't be able to change Present or Absent after this.</p>
                   </div>
                 )}
 
