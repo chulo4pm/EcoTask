@@ -354,7 +354,7 @@ function ForgotPassword({
 
             {/* FORM */}
 
-            <form onSubmit={handleSubmit} noValidate>
+            <form onSubmit={handleSubmit} noValidate className="auth-stagger">
 
 
               {/* ERROR MESSAGE */}

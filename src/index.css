@@ -892,3 +892,82 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ecotask-toast-enter { animation: none; }
 }
+
+/* Send feedback: stars bounce in one after another, and the success check draws itself. */
+@keyframes feedback-star-pop {
+  0% { transform: scale(0.6) rotate(-12deg); }
+  55% { transform: scale(1.35) rotate(6deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes feedback-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes feedback-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes feedback-ring {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+.feedback-star-on { animation: feedback-star-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.feedback-check-circle { stroke-dasharray: 176; stroke-dashoffset: 176; animation: feedback-draw 0.55s ease-out 0.1s forwards; }
+.feedback-check-tick { stroke-dasharray: 48; stroke-dashoffset: 48; animation: feedback-draw 0.35s ease-out 0.6s forwards; }
+.feedback-ring { animation: feedback-ring 0.9s ease-out 0.55s both; }
+.feedback-rise { animation: feedback-rise 0.4s ease-out 0.8s both; }
+@media (prefers-reduced-motion: reduce) {
+  .feedback-star-on, .feedback-rise, .feedback-ring { animation: none; }
+  .feedback-check-circle, .feedback-check-tick { animation: none; stroke-dashoffset: 0; }
+}
+
+/* ---- Landing and sign-in animations ---- */
+@keyframes landing-glow-pulse {
+  0%, 100% { box-shadow: 0 8px 20px -8px rgb(34 197 94 / 0.7), 0 0 0 0 rgb(34 197 94 / 0.45); }
+  60% { box-shadow: 0 8px 20px -8px rgb(34 197 94 / 0.7), 0 0 0 14px rgb(34 197 94 / 0); }
+}
+.landing-glow { animation: landing-glow-pulse 2.4s ease-out infinite; }
+.landing-navlink { position: relative; }
+.landing-navlink::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 2px; border-radius: 2px;
+  background: #4ade80; transform: scaleX(0); transform-origin: left; transition: transform 250ms ease;
+}
+.landing-navlink:hover::after { transform: scaleX(1); }
+@keyframes landing-shimmer-move { to { background-position: 200% center; } }
+.landing-shimmer {
+  background: linear-gradient(100deg, #22c55e 20%, #bbf7d0 45%, #22c55e 70%);
+  background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: landing-shimmer-move 4s linear infinite;
+}
+.landing-progress { position: absolute; left: 0; bottom: -1px; height: 3px; background: linear-gradient(90deg, #22c55e, #86efac); transition: width 120ms linear; }
+@keyframes auth-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.auth-stagger > * { animation: auth-fade-up 0.5s ease-out both; }
+.auth-stagger > *:nth-child(1) { animation-delay: 60ms; } .auth-stagger > *:nth-child(2) { animation-delay: 120ms; }
+.auth-stagger > *:nth-child(3) { animation-delay: 180ms; } .auth-stagger > *:nth-child(4) { animation-delay: 240ms; }
+.auth-stagger > *:nth-child(5) { animation-delay: 300ms; } .auth-stagger > *:nth-child(6) { animation-delay: 360ms; }
+.auth-stagger > *:nth-child(n+7) { animation-delay: 420ms; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-glow, .landing-shimmer, .auth-stagger > * { animation: none; }
+  .landing-shimmer { color: #22c55e; background: none; }
+}
+
+/* Feedback card fades away by itself after the thank-you. */
+@keyframes feedback-leave { to { opacity: 0; } }
+.feedback-leave { animation: feedback-leave 0.3s ease-in forwards; }
+
+/* Opening "Send feedback": the card springs in, the icon wiggles, and the form fills in step by step. */
+@keyframes feedback-panel-in {
+  0% { opacity: 0; transform: translateY(32px) scale(0.88); }
+  60% { opacity: 1; transform: translateY(-5px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes feedback-icon-in {
+  0% { opacity: 0; transform: scale(0.4) rotate(-24deg); }
+  65% { opacity: 1; transform: scale(1.15) rotate(8deg); }
+  100% { opacity: 1; transform: none; }
+}
+.feedback-panel { animation: feedback-panel-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.feedback-icon { animation: feedback-icon-in 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both; }
+.feedback-item { animation: feedback-rise 0.4s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .feedback-panel, .feedback-icon, .feedback-item { animation: none; }
+}

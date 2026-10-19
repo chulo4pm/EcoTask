@@ -441,7 +441,7 @@ function AdminLogin({ onBack, onAdminLogin, onForgotPassword }) {
                 FORM
             ================================================= */}
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} className="auth-stagger">
 
               {/* ERROR / LOCKED MESSAGE */}
 

@@ -419,7 +419,7 @@ function OrganizerLogin({
 
             {/* FORM */}
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} className="auth-stagger">
 
 
               {/* ERROR / LOCKED MESSAGE */}

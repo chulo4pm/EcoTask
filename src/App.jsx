@@ -199,6 +199,16 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
   const loginRef = useRef(null);
 
   useScrollReveal(rootRef);
+  const [scrollPct, setScrollPct] = useState(0);
+  useEffect(() => {
+    const onScroll = () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      setScrollPct(max > 0 ? Math.min(100, (window.scrollY / max) * 100) : 0);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Close the "Log in" menu when clicking anywhere else.
   useEffect(() => {
@@ -224,6 +234,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
 
       {/* ================= NAVBAR ================= */}
       <header className="fixed left-0 top-0 z-50 w-full border-b border-white/10 bg-[#061c10]/95 backdrop-blur-md">
+        <span className="landing-progress" style={{ width: `${scrollPct}%` }} aria-hidden="true" />
         <nav className="mx-auto flex h-[72px] max-w-[1200px] items-center justify-between gap-4 px-4 sm:px-6">
           <button onClick={() => scrollToSection("home")} className="shrink-0" aria-label="EcoTask home">
             <EcoTaskLogo light />
@@ -234,7 +245,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
               <button
                 key={link.id}
                 onClick={() => scrollToSection(link.id)}
-                className="text-sm font-semibold text-white/80 transition hover:text-green-400"
+                className="landing-navlink text-sm font-semibold text-white/80 transition hover:text-green-400"
               >
                 {link.label}
               </button>
@@ -322,7 +333,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
       <main>
 
         {/* ================= HERO ================= */}
-        <section id="home" className="relative scroll-mt-[72px] overflow-hidden bg-[#00140d] pt-[72px] text-white">
+        <section id="home" className="relative flex min-h-[100svh] scroll-mt-[72px] flex-col overflow-hidden bg-[#00140d] pt-[72px] text-white">
           <div className="absolute inset-0 overflow-hidden">
             <img
               src={volunteer}
@@ -336,13 +347,13 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
           <FloatingLeaf className="bottom-[18%] right-[30%] hidden sm:block" size={30} delay="-2s" />
           <FloatingLeaf className="bottom-[34%] right-[6%]" size={36} delay="-4s" />
 
-          <div className="relative z-10 mx-auto max-w-[1200px] px-4 pb-20 pt-16 sm:px-6 md:pb-28 md:pt-24">
+          <div className="relative z-10 mx-auto my-auto w-full max-w-[1200px] px-4 pb-16 pt-12 sm:px-6 md:pb-20 md:pt-16">
             <p className="landing-up text-xs font-extrabold uppercase tracking-[0.22em] text-green-400" style={{ animationDelay: "100ms" }}>
               Welcome to EcoTask
             </p>
 
             <h1 className="landing-up mt-4 max-w-3xl text-[40px] font-black leading-[1.05] tracking-tight sm:text-5xl md:text-6xl" style={{ animationDelay: "220ms" }}>
-              Volunteer for a <span className="text-green-400">greener community.</span>
+              Volunteer for a <span className="landing-shimmer">greener community.</span>
             </h1>
 
             <p className="landing-up mt-5 max-w-xl text-base leading-7 text-white/85 md:text-lg" style={{ animationDelay: "340ms" }}>
@@ -351,7 +362,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
             </p>
 
             <div className="landing-up mt-8 flex flex-col gap-3 sm:flex-row" style={{ animationDelay: "460ms" }}>
-              <button onClick={onGetStarted} className={`${primaryBtn} px-7 py-4 text-[15px]`}>
+              <button onClick={onGetStarted} className={`${primaryBtn} landing-glow px-7 py-4 text-[15px]`}>
                 Join as Volunteer
                 <ArrowRight size={18} />
               </button>
@@ -393,7 +404,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
         </section>
 
         {/* ================= TWO WAYS TO TAKE PART ================= */}
-        <section id="join" className="scroll-mt-[72px] bg-white px-4 py-20 sm:px-6 md:py-24">
+        <section id="join" className="scroll-mt-[72px] bg-white px-4 py-16 sm:px-6 md:py-14">
           <div className="mx-auto max-w-[1200px]">
             <div className="eco-reveal mx-auto max-w-2xl text-center">
               <SectionTag>Get started</SectionTag>
@@ -403,7 +414,7 @@ function LandingPage({ onGetStarted, onLogin, onAdmin, onOrganizer, onOrganizerR
               <p className="mt-3 text-gray-600">Pick the one that fits you.</p>
             </div>
 
-            <div className="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-2">
               {/* Volunteer */}
               <div className={`${card} flex flex-col p-7 md:p-8`}>
                 <IconTile icon={User} />

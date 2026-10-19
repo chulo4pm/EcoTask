@@ -766,6 +766,7 @@ function OrganizerRegister({
           )}
 
           <form
+           
             onSubmit={handleSubmit}
             noValidate
             className="

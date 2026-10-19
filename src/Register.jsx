@@ -770,6 +770,7 @@ function Register({
           )}
 
           <form
+           
             onSubmit={handleSubmit}
             noValidate
             className="
