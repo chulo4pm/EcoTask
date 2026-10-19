@@ -356,6 +356,21 @@ function OrganizerWorkspace({ account, onLogout }) {
   const [activityFilter, setActivityFilter] = useState('All');
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [openReports, setOpenReports] = useState(0);
+
+  // Reports still waiting for the admin (not dismissed/actioned yet) for the sidebar badge.
+  useEffect(() => {
+    let cancelled = false;
+    const loadOpen = () => fetch(`${API_BASE_URL}/api/reports/organizer`, {
+      headers: { Authorization: `Bearer ${getOrganizerInfo().token}` },
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list) => { if (!cancelled && Array.isArray(list)) setOpenReports(list.filter((r) => r.status === 'open').length); })
+      .catch(() => {});
+    loadOpen();
+    const timer = setInterval(loadOpen, 30000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activeTab]);
   // Set by a "New volunteer joined" notification: Manage Activities opens that activity's volunteer list.
   const [openVolunteersFor, setOpenVolunteersFor] = useState(null);
 
@@ -422,6 +437,11 @@ function OrganizerWorkspace({ account, onLogout }) {
                 >
                   <span className="eco-nav-item-icon"><Icon className="h-[18px] w-[18px]" /></span>
                   <span>{label}</span>
+                  {label === 'Reports' && openReports > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[10px] font-extrabold text-eco-800">
+                      {openReports > 9 ? '9+' : openReports}
+                    </span>
+                  )}
                 </button>
               );
             })}
