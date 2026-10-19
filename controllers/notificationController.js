@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 // The logged-in user's notifications (bell menu).
 const Notification = require('../models/Notification');
 
@@ -51,5 +52,20 @@ exports.clearAll = async (req, res) => {
     res.json({ message: 'Notifications cleared.' });
   } catch (error) {
     res.status(500).json({ message: 'Could not clear notifications.' });
+  }
+};
+
+// DELETE /api/notifications/:id  -> delete one of my notifications
+exports.deleteOne = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: 'Notification not found.' });
+    }
+    // Only the owner's notification can be deleted.
+    const result = await Notification.deleteOne({ _id: req.params.id, user: req.user._id });
+    if (result.deletedCount === 0) return res.status(404).json({ message: 'Notification not found.' });
+    res.json({ message: 'Notification deleted.' });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not delete the notification.' });
   }
 };
