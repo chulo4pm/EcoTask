@@ -237,6 +237,7 @@ export default function App({ onLogout }) {
 
   const [notifications, setNotifications] = useState([])
   const [notifTab, setNotifTab] = useState('ALL')
+  const [confirmClear, setConfirmClear] = useState(false)
   // Changes made here that the next poll might not reflect yet (request still in flight).
   const readLocally = useRef(new Set())
   const clearedAt = useRef(0)
@@ -368,7 +369,20 @@ export default function App({ onLogout }) {
     notificationRequest(currentUser.token, '/read-all', 'PATCH').catch(() => {})
   }
 
+  useEffect(() => { if (!notificationOpen) setConfirmClear(false) }, [notificationOpen])
+
+  const handleDeleteNotification = (notif) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== notif.id))
+    if (notif.serverId) {
+      readLocally.current.add(notif.serverId)
+      notificationRequest(currentUser.token, `/${notif.serverId}`, 'DELETE').catch(() => {})
+    } else if (notif.reminder) {
+      rememberReminders(currentUser._id, 'cleared', [notif.id])
+    }
+  }
+
   const handleClearAll = () => {
+    setConfirmClear(false)
     clearedAt.current = Date.now()
     rememberReminders(currentUser._id, 'cleared', notifications.filter((n) => n.reminder).map((n) => n.id))
     setNotifications([])
@@ -533,14 +547,25 @@ export default function App({ onLogout }) {
                         Mark all read
                       </button>
                       <button
-                        onClick={handleClearAll}
-                        className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50"
+                        onClick={() => setConfirmClear(true)}
+                        disabled={notifications.length === 0}
+                        className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-40"
                       >
                         <Trash2 size={12} />
-                        Clear
+                        Clear all
                       </button>
                     </div>
                   </div>
+
+                  {confirmClear && (
+                    <div role="alertdialog" className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                      <span className="text-[11px] font-semibold text-red-800">Delete all {notifications.length} notification{notifications.length === 1 ? '' : 's'}?</span>
+                      <span className="flex shrink-0 gap-1">
+                        <button type="button" onClick={() => setConfirmClear(false)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-white">Cancel</button>
+                        <button type="button" onClick={handleClearAll} className="rounded-lg bg-red-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-red-700">Delete all</button>
+                      </span>
+                    </div>
+                  )}
 
                   <div className="mb-3 flex items-center gap-1.5">
                     {['ALL', 'RECENT'].map((tab) => (
@@ -557,11 +582,11 @@ export default function App({ onLogout }) {
                   <div className="eco-scroll max-h-80 space-y-2 overflow-y-auto pr-1">
                     {filteredNotifications.length > 0 ? (
                       filteredNotifications.map((notif) => (
+                        <div key={notif.id} className="group/item relative">
                         <button
-                          key={notif.id}
                           type="button"
                           onClick={() => handleViewNotificationDetails(notif)}
-                          className={`group flex w-full items-start gap-3 rounded-xl border p-3 text-left transition hover:border-eco-300 hover:bg-eco-50/70 ${
+                          className={`group flex w-full items-start gap-3 rounded-xl border p-3 pr-9 text-left transition hover:border-eco-300 hover:bg-eco-50/70 ${
                             notif.isNew ? 'border-eco-200 bg-eco-50/50' : 'border-gray-100 bg-white'
                           }`}
                         >
@@ -583,6 +608,15 @@ export default function App({ onLogout }) {
                             </span>
                           </span>
                         </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete notification: ${notif.title}`}
+                          onClick={() => handleDeleteNotification(notif)}
+                          className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-gray-400 opacity-0 transition hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover/item:opacity-100 [@media(hover:none)]:opacity-100"
+                        >
+                          <X size={13} />
+                        </button>
+                        </div>
                       ))
                     ) : (
                       <div className="eco-empty py-8">

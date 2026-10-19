@@ -83,6 +83,7 @@ export default function AdminDashboard({ onLogout }) {
   // Profile Dropdown State
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [feedbackUnread, setFeedbackUnread] = useState(0);
+  const [reportsOpen, setReportsOpen] = useState(0);
   // Logged-in admin's name/email (updated live from Account Settings)
   const [adminProfile, setAdminProfile] = useState(() => JSON.parse(localStorage.getItem('adminInfo') || '{}'));
   const adminName = adminProfile.name || 'Administrator';
@@ -98,6 +99,17 @@ export default function AdminDashboard({ onLogout }) {
     const timer = setInterval(loadUnread, 30000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
+
+  // Open (no action yet) reports for the sidebar badge. Refreshed when switching tabs so it drops after the admin acts.
+  useEffect(() => {
+    let cancelled = false;
+    const loadOpen = () => adminFetch('/api/reports/summary')
+      .then((data) => { if (!cancelled && data && typeof data.open === 'number') setReportsOpen(data.open); })
+      .catch(() => {});
+    loadOpen();
+    const timer = setInterval(loadOpen, 30000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activeTab]);
 
   const handleLogout = () => {
     setShowProfileMenu(false);
@@ -183,6 +195,11 @@ export default function AdminDashboard({ onLogout }) {
                     <Icon className="h-[18px] w-[18px]" />
                   </span>
                   <span>{label}</span>
+                  {label === 'Reports' && reportsOpen > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[10px] font-extrabold text-eco-800">
+                      {reportsOpen > 9 ? '9+' : reportsOpen}
+                    </span>
+                  )}
                   {label === 'Feedback' && feedbackUnread > 0 && (
                     <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[10px] font-extrabold text-eco-800">
                       {feedbackUnread > 9 ? '9+' : feedbackUnread}
