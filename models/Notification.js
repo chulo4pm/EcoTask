@@ -20,6 +20,7 @@ const notificationSchema = new mongoose.Schema({
       'activity_unhidden',     // organizer: the admin made it visible again
       'activity_reported',     // organizer: a volunteer reported their activity (reporter stays anonymous)
       'report_submitted',      // admin: a new report needs review
+      'feedback_submitted',    // admin: a volunteer or organizer sent feedback
     ],
     required: true,
   },
