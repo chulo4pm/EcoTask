@@ -95,6 +95,9 @@ import {
 import { NOTIFICATION_STYLES, formatNotificationTime, notificationRequest } from './notificationApi'
 import AnnouncementsFeed from './AnnouncementsFeed'
 import { API_BASE_URL } from "./config";
+import { useTabRoute } from './useTabRoute'
+
+const VOLUNTEER_PAGES = ['dashboard', 'activities', 'schedule', 'records', 'announcement', 'myreports', 'settings']
 
 /* =========================================================
    ECOTASK LOGO
@@ -182,7 +185,7 @@ function VolunteerSuspendedScreen({ name, reason, checking, onRefresh, onLogout 
 }
 
 export default function App({ onLogout }) {
-  const [activePage, setActivePage] = useState('dashboard')
+  const [activePage, setActivePage] = useTabRoute('/volunteer', VOLUNTEER_PAGES, 'dashboard')
   const [profileOpen, setProfileOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)

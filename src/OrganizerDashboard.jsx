@@ -1,5 +1,6 @@
 import FeedbackModal from './Feedback';
 import { useEffect, useState } from 'react';
+import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
 import {
   Activity,
@@ -56,6 +57,7 @@ const navItems = [
   { label: 'Reports', icon: Flag },
   { label: 'Announcements', icon: Megaphone },
 ];
+const ORGANIZER_TABS = navItems.map((item) => item.label);
 
 const getOrganizerInfo = () => {
   try {
@@ -351,7 +353,7 @@ const sortLatestFirst = (activities) => sortActivitiesByStatus(activities).rever
    APPROVED ORGANIZER WORKSPACE
    ========================================== */
 function OrganizerWorkspace({ account, onLogout }) {
-  const [activeTab, setActiveTab] = useState('Dashboard');
+  const [activeTab, setActiveTab] = useTabRoute('/organizer', ORGANIZER_TABS, 'Dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activityFilter, setActivityFilter] = useState('All');
   const [showProfileMenu, setShowProfileMenu] = useState(false);

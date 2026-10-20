@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { SUPPORT_EMAIL, SUPPORT_PHONE } from "./contact";
 import {
   Check,
@@ -669,7 +670,6 @@ function OrganizerSubmitted({ onBack }) {
    REMEMBER THE CURRENT PAGE (survives a browser refresh)
 ========================================================= */
 
-const PAGE_KEY = "ecotaskPage";
 const RESET_FROM_KEY = "ecotaskResetFrom";
 
 // Dashboards need a saved login; without one, refresh goes to the landing page.
@@ -687,13 +687,35 @@ const isLoggedIn = (storageKey) => {
   }
 };
 
-const getInitialPage = () => {
-  let saved = "";
-  try { saved = sessionStorage.getItem(PAGE_KEY) || ""; } catch { /* private mode */ }
-  if (!saved) return "landing";
-  const authKey = DASHBOARD_AUTH[saved];
-  if (authKey && !isLoggedIn(authKey)) return "landing";
-  return saved;
+// Every screen has its own address. Dashboards own everything under their
+// prefix (e.g. /volunteer/schedule); the dashboard decides which tab that is.
+const PAGE_PATHS = {
+  landing: "/",
+  login: "/login",
+  register: "/register",
+  "registration-submitted": "/register/submitted",
+  "forgot-password": "/forgot-password",
+  "verification-code": "/verify-code",
+  "reset-password": "/reset-password",
+  "password-success": "/password-reset-success",
+  "admin-login": "/admin/login",
+  admin: "/admin",
+  "organizer-login": "/organizer/login",
+  "organizer-register": "/organizer/register",
+  "organizer-submitted": "/organizer/submitted",
+  organizer: "/organizer",
+  dashboard: "/volunteer",
+};
+
+// URL -> page name, or null when the address doesn't exist.
+const pathToPage = (pathname) => {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  const exact = Object.keys(PAGE_PATHS).find((key) => PAGE_PATHS[key] === path);
+  if (exact) return exact;
+  if (path.startsWith("/admin/")) return "admin";
+  if (path.startsWith("/organizer/")) return "organizer";
+  if (path.startsWith("/volunteer/")) return "dashboard";
+  return null;
 };
 
 const readResetFrom = () => {
@@ -786,15 +808,12 @@ const readLogoutName = (storageKey) => {
 
 
 function App() {
-  const [page, setPage] = useState(getInitialPage);
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const page = pathToPage(pathname) || "landing";
   // Shown on the landing page right after logging out: { name } or null.
   const [logoutNotice, setLogoutNotice] = useState(null);
   const closeLogoutNotice = useCallback(() => setLogoutNotice(null), []);
-
-  // Save the page every time it changes, so a refresh reopens it.
-  useEffect(() => {
-    try { sessionStorage.setItem(PAGE_KEY, page); } catch { /* private mode */ }
-  }, [page]);
 
   // Page transition: a green curtain slides up, the page switches behind it,
   // then the curtain slides away. phase: null | "in" | "out"
@@ -807,13 +826,13 @@ function App() {
     if (next === page) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion || curtain) {
-      setPage(next);
+      navigate(PAGE_PATHS[next]);
       window.scrollTo(0, 0);
       return;
     }
     setCurtain("in");
     timers.current.push(setTimeout(() => {
-      setPage(next);
+      navigate(PAGE_PATHS[next]);
       window.scrollTo(0, 0);
       setCurtain("out");
     }, CURTAIN_IN_MS));
@@ -848,6 +867,21 @@ function App() {
   const logoutVolunteer = () => logout("userInfo");
   const logoutAdmin = () => logout("adminInfo");
   const logoutOrganizer = () => logout("organizerInfo");
+
+  // Dashboards need a saved login. Checked when the address changes (not on
+  // every render), so logging out can still play its goodbye animation.
+  const authKey = DASHBOARD_AUTH[page];
+  const allowed = useMemo(
+    () => !authKey || isLoggedIn(authKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [authKey, pathname],
+  );
+
+  if (!pathToPage(pathname) || !allowed) return <Navigate to="/" replace />;
+  // The reset steps need the email typed on the previous step (lost on refresh).
+  if ((page === "verification-code" || page === "reset-password") && !userEmail) {
+    return <Navigate to={PAGE_PATHS["forgot-password"]} replace />;
+  }
 
   const content = (() => {
   /* ORGANIZER PAGES */

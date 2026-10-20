@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, useClockTick } from './activityTime';
 import {
   Activity,
@@ -51,6 +52,7 @@ const navItems = [
   { label: 'Announcements', icon: Megaphone },
   { label: 'Feedback', icon: MessageSquare },
 ];
+const ADMIN_TABS = [...navItems.map((item) => item.label), 'Settings'];
 
 
 const getDateKey = (dateValue) => {
@@ -77,7 +79,7 @@ const sortActivitiesByStatus = (activities) => {
 };
 
 export default function AdminDashboard({ onLogout }) {
-  const [activeTab, setActiveTab] = useState('Dashboard');
+  const [activeTab, setActiveTab] = useTabRoute('/admin', ADMIN_TABS, 'Dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Profile Dropdown State
