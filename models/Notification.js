@@ -17,6 +17,7 @@ const notificationSchema = new mongoose.Schema({
       'organizer_application', // admin: a new organizer application needs review
       'report_reviewed',       // volunteer: the admin reviewed their report
       'activity_hidden',       // organizer: the admin hid one of their activities
+      'activity_deleted',      // organizer: the admin deleted one of their activities (with a reason)
       'activity_unhidden',     // organizer: the admin made it visible again
       'activity_reported',     // organizer: a volunteer reported their activity (reporter stays anonymous)
       'report_submitted',      // admin: a new report needs review

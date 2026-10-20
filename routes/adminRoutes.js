@@ -7,6 +7,7 @@ const {
   rejectOrganizer,
   setActivityVisibility,
   assignActivityOrganizer,
+  deleteActivityAsAdmin,
   getOrganizerDetails,
   suspendOrganizer,
   reactivateOrganizer,
@@ -38,5 +39,7 @@ router.patch('/volunteers/:id/reactivate', reactivateVolunteer);
 router.get('/activities/:id/details', getActivityDetails);
 router.patch('/activities/:id/visibility', setActivityVisibility);
 router.patch('/activities/:id/organizer', assignActivityOrganizer);
+// Delete an upcoming/ongoing activity with a reason; volunteers and the organizer are notified.
+router.delete('/activities/:id', deleteActivityAsAdmin);
 
 module.exports = router;

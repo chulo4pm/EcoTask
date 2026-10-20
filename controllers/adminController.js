@@ -7,6 +7,7 @@ const Activity = require('../models/Activity');
 const Participation = require('../models/Participation');
 const { notifyUsers } = require('../utils/notify');
 const { logActivityEvent } = require('../utils/activityLog');
+const { getActivityPhase } = require('../utils/activityTime');
 const Report = require('../models/Report');
 const ActivityEvent = require('../models/ActivityEvent');
 const { DOCUMENT_DIR } = require('../middleware/documentUpload');
@@ -184,6 +185,78 @@ exports.setActivityVisibility = async (req, res) => {
     }
 
     res.json({ message: hidden ? 'Activity hidden.' : 'Activity visible again.', activity });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// DELETE /api/admin/activities/:id   body: { reason }
+// Removes an upcoming or ongoing activity (with its sign-ups, reports and history).
+// Every volunteer who joined, and the organizer who posted it, gets a notification with
+// the admin's reason. Completed activities are kept so volunteers keep their records.
+const MIN_DELETE_REASON = 10;
+const MAX_DELETE_REASON = 300;
+
+exports.deleteActivityAsAdmin = async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) return res.status(404).json({ message: 'Activity not found' });
+
+    const reason = String(req.body?.reason || '').trim();
+    if (reason.length < MIN_DELETE_REASON) {
+      return res.status(400).json({ message: `Please give a reason (at least ${MIN_DELETE_REASON} characters). Everyone affected will see it.` });
+    }
+    if (reason.length > MAX_DELETE_REASON) {
+      return res.status(400).json({ message: `The reason is too long (maximum ${MAX_DELETE_REASON} characters).` });
+    }
+
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+    if (getActivityPhase(activity) === 'completed') {
+      return res.status(400).json({
+        message: "Completed activities can't be deleted, so volunteers keep their participation records.",
+      });
+    }
+
+    // Everyone who joined: the participants list plus any participation records.
+    const participations = await Participation.find({ activity: activity._id }).select('user');
+    const volunteerIds = [...new Set([
+      ...(activity.participants || []),
+      ...participations.map((p) => p.user),
+    ].filter(Boolean).map((id) => String(id)))];
+
+    // Keep the title short so the reason always fits inside a notification (500 characters).
+    const shortTitle = activity.title.length > 80 ? `${activity.title.slice(0, 77)}...` : activity.title;
+
+    await Promise.all([
+      notifyUsers(volunteerIds, {
+        type: 'activity_cancelled',
+        title: 'Activity removed by admin',
+        message: `"${shortTitle}" that you joined was deleted by the admin. Reason: ${reason}`,
+      }),
+      activity.organizer && notifyUsers([activity.organizer], {
+        type: 'activity_deleted',
+        title: 'Your activity was deleted by the admin',
+        message: `"${shortTitle}" was removed. ${volunteerIds.length} joined volunteer${volunteerIds.length === 1 ? ' was' : 's were'} notified. Reason: ${reason}`,
+      }),
+    ]);
+
+    await Promise.all([
+      Participation.deleteMany({ activity: activity._id }),
+      Report.deleteMany({ activity: activity._id }),
+      ActivityEvent.deleteMany({ activity: activity._id }),
+    ]);
+    if (activity.coverImage && activity.coverImage.startsWith('/uploads/')) {
+      await deleteFile(BUCKETS.activityImages, path.basename(activity.coverImage)).catch(() => {});
+      await fs.promises.unlink(path.join(__dirname, '..', activity.coverImage)).catch(() => {});
+    }
+    await Activity.deleteOne({ _id: activity._id });
+
+    res.json({
+      message: `"${shortTitle}" was deleted. ${volunteerIds.length} volunteer${volunteerIds.length === 1 ? '' : 's'}${activity.organizer ? ' and the organizer were' : ' were'} notified.`,
+      notifiedVolunteers: volunteerIds.length,
+      notifiedOrganizer: Boolean(activity.organizer),
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
