@@ -12,7 +12,7 @@ const {
 } = require('../utils/validators');
 const { removeUploadedFiles, toStoredDocuments } = require('../middleware/documentUpload');
 const crypto = require('crypto');
-const { sendVerificationCodeEmail, sendPasswordResetCodeEmail } = require('../utils/sendEmail');
+const { sendVerificationCodeEmail, sendPasswordResetCodeEmail, sendLoginCodeEmail } = require('../utils/sendEmail');
 const { notifyAdmins } = require('../utils/notify');
 
 /* ------------------------------------------
@@ -287,6 +287,184 @@ exports.getMe = async (req, res) => {
 };
 
 // Login User (all roles). The frontend login pages check the role.
+/* ------------------------------------------
+   LOGIN CODE (MFA) + "TRUST THIS DEVICE FOR 7 DAYS"
+   ------------------------------------------ */
+const TRUST_DAYS = 7;
+const MAX_TRUSTED_DEVICES = 10;          // per account; the oldest is dropped
+const LOGIN_CODE_SESSION_MINUTES = 30;   // "resend" only works this long after logging in
+
+const loginResendWait = (user) => {
+  if (!user.loginCodeSentAt) return 0;
+  const elapsed = (Date.now() - new Date(user.loginCodeSentAt).getTime()) / 1000;
+  return Math.max(0, Math.ceil(RESEND_COOLDOWN_SECONDS - elapsed));
+};
+
+const issueLoginCode = async (user) => {
+  const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+  user.loginCode = hashCode(code);
+  user.loginCodeExpires = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+  user.loginCodeAttempts = 0;
+  user.loginCodeSentAt = new Date();
+  await user.save();
+
+  try {
+    await sendLoginCodeEmail({ to: user.email, name: user.name, code, minutes: CODE_TTL_MINUTES });
+    return true;
+  } catch (err) {
+    console.error('Failed to send login code email:', err.message);
+    return false;
+  }
+};
+
+// What the frontend needs to show the "Enter your login code" screen.
+const loginCodePayload = (user, emailSent) => ({
+  needsLoginCode: true,
+  email: user.email,
+  role: user.role,
+  emailSent,
+  resendAvailableIn: loginResendWait(user),
+  expiresIn: expiresInSeconds(user.loginCodeExpires),
+  trustDays: TRUST_DAYS,
+});
+
+// `user` must have been loaded with +trustedDevices.
+const hasValidTrust = (user, trustToken) => {
+  if (!user || typeof trustToken !== 'string' || trustToken.length < 20) return false;
+  const hash = hashCode(trustToken);
+  const now = Date.now();
+  return (user.trustedDevices || []).some(
+    (device) => device.tokenHash === hash && new Date(device.expiresAt).getTime() > now,
+  );
+};
+
+// POST /api/auth/login-code/verify  body: { email, code, trustDevice }
+// Correct code -> same response as a normal login, plus trustToken when "trust" was ticked.
+exports.verifyLoginCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const code = String(req.body.code || '').replace(/\D/g, '');
+    const trustDevice = req.body.trustDevice === true;
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (code.length !== 6) errors.code = 'Enter the 6-digit code.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await User.findOne({ email }).select('+loginCode +trustedDevices');
+    const invalid = () => res.status(400).json({
+      message: 'Invalid or expired code.',
+      errors: { code: 'Invalid or expired code.' },
+    });
+
+    if (!user || !user.isEmailVerified) return invalid();
+
+    if (user.isSuspended) {
+      return res.status(403).json({
+        message: `This account has been suspended by the admin. Reason: ${user.suspendedReason || 'Not specified'}`,
+        suspended: true,
+        suspendedReason: user.suspendedReason,
+      });
+    }
+
+    if (!user.loginCode || !user.loginCodeExpires || user.loginCodeExpires < Date.now()) {
+      return res.status(400).json({
+        message: 'This code has expired. Tap "Resend code" to get a new one.',
+        errors: { code: 'Code expired.' },
+        expired: true,
+      });
+    }
+
+    if (user.loginCodeAttempts >= MAX_CODE_ATTEMPTS) {
+      return res.status(429).json({
+        message: 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Too many attempts.' },
+        expired: true,
+      });
+    }
+
+    if (!codesMatch(code, user.loginCode)) {
+      user.loginCodeAttempts += 1;
+      await user.save();
+      const left = MAX_CODE_ATTEMPTS - user.loginCodeAttempts;
+      return res.status(400).json({
+        message: left > 0
+          ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`
+          : 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Incorrect code.' },
+        attemptsLeft: left,
+      });
+    }
+
+    // Correct. The code works once.
+    user.loginCode = null;
+    user.loginCodeExpires = null;
+    user.loginCodeAttempts = 0;
+    user.loginCodeSentAt = null;
+
+    let trust = {};
+    if (trustDevice) {
+      const now = Date.now();
+      const trustToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(now + TRUST_DAYS * 24 * 60 * 60 * 1000);
+      const kept = user.trustedDevices.filter((device) => new Date(device.expiresAt).getTime() > now);
+      kept.push({
+        tokenHash: hashCode(trustToken),
+        createdAt: new Date(now),
+        expiresAt,
+        userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
+      });
+      user.trustedDevices = kept.slice(-MAX_TRUSTED_DEVICES);
+      trust = { trustToken, trustExpiresAt: expiresAt };
+    }
+
+    await user.save();
+    res.json({ ...toAuthResponse(user), ...trust });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/auth/login-code/resend  body: { email }
+// Only works right after a correct password (a code was already sent), 60s apart.
+exports.resendLoginCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const emailError = validateEmail(email);
+    if (emailError) return sendValidationErrors(res, { email: emailError });
+
+    const user = await User.findOne({ email });
+    const sessionStart = user?.loginCodeSentAt ? new Date(user.loginCodeSentAt).getTime() : 0;
+    const sessionOpen = sessionStart && Date.now() - sessionStart < LOGIN_CODE_SESSION_MINUTES * 60 * 1000;
+
+    if (!user || !user.isEmailVerified || user.isSuspended || !sessionOpen) {
+      return res.status(400).json({
+        message: 'Please go back and log in again to get a new code.',
+        sessionExpired: true,
+      });
+    }
+
+    const wait = loginResendWait(user);
+    if (wait > 0) {
+      return res.status(429).json({
+        message: `Please wait ${wait} seconds before asking for another code.`,
+        resendAvailableIn: wait,
+      });
+    }
+
+    const emailSent = await issueLoginCode(user);
+    res.json({
+      message: emailSent ? `A new code was sent to ${user.email}.` : "We couldn't send the email. Please try again.",
+      emailSent,
+      resendAvailableIn: loginResendWait(user),
+      expiresIn: expiresInSeconds(user.loginCodeExpires),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.loginUser = async (req, res) => {
   try {
     // Emails are saved lowercase at registration, so match them the same way here.
@@ -326,9 +504,18 @@ exports.loginUser = async (req, res) => {
         });
       }
 
-      // Pending / rejected organizers still get a token so they can see their
-      // status and resubmit documents. organizerOnly blocks everything else.
-      res.json(toAuthResponse(user));
+      // MFA: a browser that was trusted in the last 7 days skips the code.
+      const withDevices = await User.findById(user._id).select('+trustedDevices');
+      if (hasValidTrust(withDevices, req.body.trustToken)) {
+        // Pending / rejected organizers still get a token so they can see their
+        // status and resubmit documents. organizerOnly blocks everything else.
+        return res.json(toAuthResponse(user));
+      }
+
+      // Otherwise email a 6-digit code. If one was just sent, keep it (no email spam).
+      let emailSent = true;
+      if (loginResendWait(user) === 0) emailSent = await issueLoginCode(user);
+      return res.json(loginCodePayload(user, emailSent));
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
@@ -634,6 +821,7 @@ exports.resetPassword = async (req, res) => {
 // rejecting the fresh token we return in the same second.
 const invalidateOldTokens = (user) => {
   user.tokensValidAfter = new Date(Date.now() - 1000);
+  user.trustedDevices = [];   // "trust this device for 7 days" is cancelled too
 };
 
 // PUT /api/auth/me  body: { name, currentPassword }

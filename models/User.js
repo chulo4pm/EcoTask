@@ -122,6 +122,38 @@ const userSchema = new mongoose.Schema({
     default: null,
   },
 
+  // ---------- Login code (MFA) ----------
+  // After a correct password, a 6-digit code is emailed. Same hashing as the other codes.
+  loginCode: {
+    type: String,
+    default: null,
+    select: false,
+  },
+  loginCodeExpires: {
+    type: Date,
+    default: null,
+  },
+  loginCodeAttempts: {
+    type: Number,
+    default: 0,
+  },
+  loginCodeSentAt: {
+    type: Date,
+    default: null,
+  },
+  // Browsers the user ticked "Trust this device for 7 days" on. Only a SHA-256 hash of
+  // each device token is stored. Cleared on password change / "log out of all devices".
+  trustedDevices: {
+    type: [new mongoose.Schema({
+      tokenHash: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now },
+      expiresAt: { type: Date, required: true },
+      userAgent: { type: String, default: '' },
+    }, { _id: false })],
+    default: [],
+    select: false,
+  },
+
   // ---------- Suspension (set by admin) ----------
   // A suspended account cannot log in or use the API, and its activities are hidden from volunteers.
   isSuspended: {

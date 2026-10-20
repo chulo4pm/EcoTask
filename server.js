@@ -51,9 +51,11 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.error('MongoDB Connection Error:', err));
 
 // Rate limiting (must come BEFORE the routes)
-const { loginLimiter, registerLimiter, apiLimiter, verifyEmailLimiter, resendCodeLimiter, forgotPasswordLimiter, resetPasswordLimiter, profileUpdateLimiter } = require('./middleware/rateLimiter');
+const { loginCodeLimiter, loginCodeResendLimiter, loginLimiter, registerLimiter, apiLimiter, verifyEmailLimiter, resendCodeLimiter, forgotPasswordLimiter, resetPasswordLimiter, profileUpdateLimiter } = require('./middleware/rateLimiter');
 app.use('/api', apiLimiter);
 app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/login-code/verify', loginCodeLimiter);
+app.use('/api/auth/login-code/resend', loginCodeResendLimiter);
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/organizer/register', registerLimiter);
 app.use('/api/auth/verify-email', verifyEmailLimiter);

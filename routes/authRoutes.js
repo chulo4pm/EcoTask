@@ -6,6 +6,8 @@ const {
   registerOrganizer,
   resubmitOrganizerDocuments,
   loginUser,
+  verifyLoginCode,
+  resendLoginCode,
   getMe,
   updateMyProfile,
   changeMyPassword,
@@ -35,6 +37,9 @@ router.post('/verify-reset-code', verifyResetCode);
 router.post('/reset-password', resetPassword);
 // Log in an existing user and return a JWT token.
 router.post('/login', loginUser);
+// MFA: confirm the emailed login code (optionally trusting this browser for 7 days).
+router.post('/login-code/verify', verifyLoginCode);
+router.post('/login-code/resend', resendLoginCode);
 // Current user info (used to refresh organizer approval status).
 router.get('/me', protect, getMe);
 // Account settings for the logged-in user.

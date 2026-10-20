@@ -99,6 +99,15 @@ exports.sendVerificationCodeEmail = ({ to, name, code, minutes }) => sendCodeEma
   logLabel: 'Verification code',
 });
 
+exports.sendLoginCodeEmail = ({ to, name, code, minutes }) => sendCodeEmail({
+  to, name, code, minutes,
+  subject: `${code} is your EcoTask login code`,
+  heading: 'Confirm it\'s you',
+  intro: 'Use this code to finish signing in to EcoTask:',
+  footer: "Never share this code. If you didn't try to sign in, someone may know your password, so please change it right away.",
+  logLabel: 'Login code',
+});
+
 exports.sendPasswordResetCodeEmail = ({ to, name, code, minutes }) => sendCodeEmail({
   to, name, code, minutes,
   subject: `${code} is your EcoTask password reset code`,

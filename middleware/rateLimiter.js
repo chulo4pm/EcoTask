@@ -50,6 +50,17 @@ exports.resendCodeLimiter = createLimiter({
   message: 'Too many code requests. Please try again later.',
 });
 
+// Login code (MFA): limit code guesses and resend emails per IP
+exports.loginCodeLimiter = createLimiter({
+  windowMs: 15 * 60 * 1000, max: 15,
+  message: 'Too many code attempts. Please try again later.',
+});
+
+exports.loginCodeResendLimiter = createLimiter({
+  windowMs: 60 * 60 * 1000, max: 10,
+  message: 'Too many code requests. Please try again later.',
+});
+
 // Forgot password: limit reset emails and code guesses per IP
 exports.forgotPasswordLimiter = createLimiter({
   windowMs: 60 * 60 * 1000, max: 6,
