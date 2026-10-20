@@ -48,6 +48,8 @@ const formatCountdown = (ms) => {
 };
 import volunteer from "./assets/voluteer.jpg";
 import VerifyEmail from "./VerifyEmail";
+import LoginCodeStep from "./LoginCodeStep";
+import { getTrustToken } from "./trustedDevices";
 import { API_BASE_URL } from "./config";
 import { getRememberedEmail, applyRememberChoice } from "./rememberMe";
 
@@ -158,6 +160,8 @@ function Login({
   const [remember, setRemember] = useState(() => Boolean(rememberedEmail));
   // Set when the account exists but the email isn't verified yet.
   const [verification, setVerification] = useState(null);
+  // Set after a correct password when a login code was emailed (MFA).
+  const [loginCode, setLoginCode] = useState(null);
   const [lockedUntil, setLockedUntil] = useState(readLock);
   const [now, setNow] = useState(() => Date.now());
 
@@ -207,7 +211,7 @@ function Login({
       const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, trustToken: getTrustToken(email) })
       });
 
       let data;
@@ -238,6 +242,13 @@ function Login({
       }
 
       if (!res.ok) throw new Error(data.message || 'Login failed');
+
+      // Correct password: a login code was emailed (unless this browser is trusted).
+      if (data.needsLoginCode) {
+        saveLock(0);
+        setLoginCode(data);
+        return;
+      }
 
       saveLock(0);
 
@@ -281,6 +292,42 @@ function Login({
     localStorage.setItem('userInfo', JSON.stringify(data));
     onLogin();
   };
+
+
+  // Login code confirmed: same data as a normal login.
+  const handleCodeVerified = (data) => {
+    setLoginCode(null);
+    if (!data.token) {
+      setError(data.message || 'Please sign in again.');
+      return;
+    }
+    if (data.role !== 'volunteer') {
+      setError(
+        data.role === 'organizer'
+          ? 'This is an organizer account. Please use the Organizer Login from the home page.'
+          : 'This is an admin account. Please use the Admin Login from the home page.'
+      );
+      return;
+    }
+    applyRememberChoice(data.email || rememberedEmail, remember);
+    localStorage.setItem('userInfo', JSON.stringify(data));
+    onLogin();
+  };
+
+
+  if (loginCode) {
+    return (
+      <LoginCodeStep
+        email={loginCode.email}
+        emailSent={loginCode.emailSent}
+        resendAvailableIn={loginCode.resendAvailableIn}
+        expiresIn={loginCode.expiresIn}
+        trustDays={loginCode.trustDays}
+        onVerified={handleCodeVerified}
+        onBack={() => setLoginCode(null)}
+      />
+    );
+  }
 
 
   if (verification) {

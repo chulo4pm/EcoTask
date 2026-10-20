@@ -13,6 +13,8 @@ import {
 import { useEffect, useState } from "react";
 import volunteer from "./assets/voluteer.jpg";
 import { API_BASE_URL } from "./config";
+import LoginCodeStep from "./LoginCodeStep";
+import { getTrustToken } from "./trustedDevices";
 
 
 /* =========================================================
@@ -114,6 +116,8 @@ function AdminLogin({ onBack, onAdminLogin, onForgotPassword }) {
 
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Set after a correct password when a login code was emailed (MFA).
+  const [loginCode, setLoginCode] = useState(null);
   const [lockedUntil, setLockedUntil] = useState(readLock);
   const [now, setNow] = useState(() => Date.now());
 
@@ -160,7 +164,7 @@ function AdminLogin({ onBack, onAdminLogin, onForgotPassword }) {
       const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, trustToken: getTrustToken(email) })
       });
 
       let data;
@@ -185,6 +189,13 @@ function AdminLogin({ onBack, onAdminLogin, onForgotPassword }) {
 
       if (!res.ok) throw new Error(data.message || 'Login failed');
 
+      // Correct password: a login code was emailed (unless this browser is trusted).
+      if (data.needsLoginCode) {
+        saveLock(0);
+        setLoginCode(data);
+        return;
+      }
+
       saveLock(0);
 
       if (data.role !== 'admin') {
@@ -204,6 +215,37 @@ function AdminLogin({ onBack, onAdminLogin, onForgotPassword }) {
     }
 
   };
+
+
+  // Login code confirmed: same data as a normal login.
+  const handleCodeVerified = (data) => {
+    setLoginCode(null);
+    if (!data.token) {
+      setError(data.message || 'Please sign in again.');
+      return;
+    }
+    if (data.role !== 'admin') {
+      setError('Access denied. This account is not an admin.');
+      return;
+    }
+    localStorage.setItem('adminInfo', JSON.stringify(data));
+    onAdminLogin();
+  };
+
+
+  if (loginCode) {
+    return (
+      <LoginCodeStep
+        email={loginCode.email}
+        emailSent={loginCode.emailSent}
+        resendAvailableIn={loginCode.resendAvailableIn}
+        expiresIn={loginCode.expiresIn}
+        trustDays={loginCode.trustDays}
+        onVerified={handleCodeVerified}
+        onBack={() => setLoginCode(null)}
+      />
+    );
+  }
 
 
   return (
