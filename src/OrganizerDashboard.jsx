@@ -360,6 +360,12 @@ function OrganizerWorkspace({ account, onLogout }) {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [openReports, setOpenReports] = useState(0);
+  // Create Activity draft: kept here so it isn't lost when you open another page.
+  const [activityDraft, setActivityDraft] = useState(() => loadActivityDraft(account?._id));
+
+  useEffect(() => {
+    saveActivityDraft(account?._id, activityDraft);
+  }, [account?._id, activityDraft]);
 
   // Reports still waiting for the admin (not dismissed/actioned yet) for the sidebar badge.
   useEffect(() => {
@@ -529,7 +535,7 @@ function OrganizerWorkspace({ account, onLogout }) {
               <p className="eco-page-subtitle">{pageMeta[activeTab].subtitle}</p>
             </div>
             {activeTab === 'Dashboard' && <OrganizerHomeView goTo={setActiveTab} />}
-            {activeTab === 'Create Activity' && <CreateActivityView />}
+            {activeTab === 'Create Activity' && <CreateActivityView draft={activityDraft} setDraft={setActivityDraft} />}
             {activeTab === 'Manage Activities' && (
               <ManageActivitiesView
                 activeFilter={activityFilter}
@@ -957,6 +963,35 @@ const EMPTY_ACTIVITY_FORM = {
   coverImageFile: null,
 };
 
+// The Create Activity draft lives in OrganizerWorkspace, so it survives moving to other
+// pages. The typed fields are also kept for this browser tab (refresh-safe); the chosen
+// image can't be saved that way, so it only survives page switches, not a refresh.
+// The draft is only emptied by "Publish" or "Clear all".
+const activityDraftKey = (id) => `ecotaskActivityDraft:${id || 'organizer'}`;
+
+const loadActivityDraft = (id) => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(activityDraftKey(id)) || 'null');
+    if (saved && typeof saved === 'object') {
+      return { ...EMPTY_ACTIVITY_FORM, ...saved, coverImage: '', coverImageFile: null };
+    }
+  } catch { /* storage blocked or bad data */ }
+  return EMPTY_ACTIVITY_FORM;
+};
+
+const saveActivityDraft = (id, draft) => {
+  const { coverImage, coverImageFile, ...fields } = draft; // eslint-disable-line no-unused-vars
+  const hasText = Object.values(fields).some((value) => String(value ?? '').trim() !== '');
+  try {
+    if (hasText) sessionStorage.setItem(activityDraftKey(id), JSON.stringify(fields));
+    else sessionStorage.removeItem(activityDraftKey(id));
+  } catch { /* storage blocked */ }
+};
+
+const hasActivityDraft = (draft) => Object.entries(draft).some(
+  ([key, value]) => key !== 'coverImage' && value !== null && String(value ?? '').trim() !== '',
+);
+
 const TIME_OPTIONS = Array.from({ length: 24 }, (_, hour) => {
   const displayHour = hour % 12 || 12;
   const period = hour < 12 ? 'AM' : 'PM';
@@ -1132,14 +1167,14 @@ function PublishSuccessCard({ info, onClose }) {
   );
 }
 
-function CreateActivityView() {
-  const [formData, setFormData] = useState(EMPTY_ACTIVITY_FORM);
+function CreateActivityView({ draft: formData, setDraft: setFormData }) {
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [imageError, setImageError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notification, setNotification] = useState('');
   const [showPublishConfirmation, setShowPublishConfirmation] = useState(false);
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false);
   // Details of the activity that was just published (drives the success animation).
   const [published, setPublished] = useState(null);
 
@@ -1172,7 +1207,11 @@ function CreateActivityView() {
     if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault();
   };
 
-  const handleClear = () => {
+  const draftHasContent = hasActivityDraft(formData);
+
+  // "Clear all" asks first; the draft is only wiped after the organizer confirms.
+  const confirmClear = () => {
+    setShowClearConfirmation(false);
     setFormData(EMPTY_ACTIVITY_FORM);
     setErrors({});
     setTouched({});
@@ -1467,8 +1506,19 @@ function CreateActivityView() {
               {notification}
             </p>
           )}
-          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={handleClear} className="eco-btn eco-btn-danger-soft">
-            Clear
+          {!notification && draftHasContent && (
+            <p className="mr-auto text-xs font-semibold text-slate-500">
+              Draft kept while you switch pages. It clears only when you publish or press Clear all.
+            </p>
+          )}
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setShowClearConfirmation(true)}
+            disabled={!draftHasContent || saving}
+            className="eco-btn eco-btn-danger-soft"
+          >
+            Clear all
           </button>
           <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={requestPublish} disabled={saving} className="eco-btn eco-btn-primary px-5">
             {saving ? 'Publishing...' : 'Publish activity'}
@@ -1530,6 +1580,26 @@ function CreateActivityView() {
       </div>
 
       {published && <PublishSuccessCard info={published} onClose={() => setPublished(null)} />}
+
+      {showClearConfirmation && (
+        <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="ecotask-modal-panel eco-modal w-full max-w-sm p-6 text-center text-slate-800" role="dialog" aria-modal="true" aria-label="Clear all fields">
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-600"><Trash2 className="h-6 w-6" /></span>
+            <h3 className="mt-4 text-base font-extrabold">Clear all fields?</h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-500">
+              Everything you typed and the cover image will be removed. This can&apos;t be undone.
+            </p>
+            <div className="mt-5 flex justify-center gap-2">
+              <button type="button" onClick={() => setShowClearConfirmation(false)} className="eco-btn eco-btn-secondary">
+                Keep editing
+              </button>
+              <button type="button" onClick={confirmClear} className="eco-btn eco-btn-danger">
+                Clear all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPublishConfirmation && (
         <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">

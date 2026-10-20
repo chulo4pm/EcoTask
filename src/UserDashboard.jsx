@@ -1167,6 +1167,8 @@ function Activities({ goTo }) {
   const [pageNotice, setPageNotice] = useState('')
   const [registeredActivities, setRegisteredActivities] = useState([])
   const [activityFilter, setActivityFilter] = useState('All')
+  // Which activities to show: 'All', 'NotJoined' (still open to me) or 'Joined' (I'm registered).
+  const [joinFilter, setJoinFilter] = useState('All')
   // Two separate lists: what you can still join ("active") and finished ones ("past").
   const [view, setView] = useState('active')
   const [loading, setLoading] = useState(true)
@@ -1388,9 +1390,17 @@ function Activities({ goTo }) {
   }, { Upcoming: 0, Ongoing: 0, Completed: 0 })
   const activeActivities = sortSoonestFirst(activities.filter((activity) => activity.status !== 'Completed'))
   const pastActivities = sortLatestFirst(activities.filter((activity) => activity.status === 'Completed'))
+  const joinedActiveCount = activeActivities.filter((activity) => registeredActivities.includes(activity.id)).length
+  const notJoinedActiveCount = activeActivities.length - joinedActiveCount
   const visibleActivities = view === 'past'
     ? pastActivities
-    : activeActivities.filter((activity) => activityFilter === 'All' || activity.status === activityFilter)
+    : activeActivities
+      .filter((activity) => activityFilter === 'All' || activity.status === activityFilter)
+      .filter((activity) => {
+        if (joinFilter === 'Joined') return registeredActivities.includes(activity.id)
+        if (joinFilter === 'NotJoined') return !registeredActivities.includes(activity.id)
+        return true
+      })
 
   if (loading) {
     return (
@@ -1448,16 +1458,31 @@ function Activities({ goTo }) {
       </PageHeader>
 
       {view === 'active' ? (
-        <div className="-mt-3 mb-5 flex flex-wrap gap-2">
+        <div className="-mt-3 mb-5 flex flex-wrap items-center gap-2">
           {[
             { key: 'All', label: 'All active', count: activeActivities.length },
+            { key: 'NotJoined', label: 'Not joined', count: notJoinedActiveCount },
+            { key: 'Joined', label: 'Joined', count: joinedActiveCount },
+          ].map((filter) => (
+            <button
+              key={filter.key}
+              type="button"
+              onClick={() => setJoinFilter(filter.key)}
+              className={`eco-chip ${joinFilter === filter.key ? 'eco-chip-active' : ''}`}
+            >
+              {filter.label}
+              <span className="eco-chip-count">{filter.count}</span>
+            </button>
+          ))}
+          <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-eco-200 sm:block" />
+          {[
             { key: 'Upcoming', label: 'Upcoming', count: activityCounts.Upcoming },
             { key: 'Ongoing', label: 'Today', count: activityCounts.Ongoing },
           ].map((filter) => (
             <button
               key={filter.key}
               type="button"
-              onClick={() => setActivityFilter(filter.key)}
+              onClick={() => setActivityFilter(activityFilter === filter.key ? 'All' : filter.key)}
               className={`eco-chip ${activityFilter === filter.key ? 'eco-chip-active' : ''}`}
             >
               {filter.label}
@@ -1474,7 +1499,13 @@ function Activities({ goTo }) {
       {visibleActivities.length === 0 && (
         <div className="eco-empty py-12">
           <Leaf size={26} className="text-eco-400" />
-          {view === 'past' ? 'No past events yet.' : 'No activities in this category yet.'}
+          {view === 'past'
+            ? 'No past events yet.'
+            : joinFilter === 'NotJoined'
+              ? "You've joined every open activity here."
+              : joinFilter === 'Joined'
+                ? "You haven't joined any of these activities yet."
+                : 'No activities in this category yet.'}
         </div>
       )}
 
@@ -1501,9 +1532,9 @@ function Activities({ goTo }) {
                 <div className="absolute left-3 top-3 flex gap-1.5">
                   <StatusBadge status={activity.status} />
                 </div>
-                {registered && (
-                  <span className={`eco-badge absolute right-3 top-3 shadow-md ${past ? 'border border-slate-500 bg-slate-700 text-white' : 'eco-badge-solid'}`}>
-                    <CheckCircle size={12} /> {past ? 'You joined' : 'Registered'}
+                {registered && past && (
+                  <span className="eco-badge absolute right-3 top-3 border border-slate-500 bg-slate-700 text-white shadow-md">
+                    <CheckCircle size={12} /> You joined
                   </span>
                 )}
                 <p className="absolute bottom-3 left-4 flex items-center gap-1.5 text-xs font-semibold text-white">
@@ -1550,20 +1581,54 @@ function Activities({ goTo }) {
                   <div className="eco-progress"><span style={{ width: `${fillPercent}%` }} /></div>
                 </div>
 
-                <div className="mt-4 flex justify-end gap-2 border-t border-eco-100 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedActivity(activity)}
-                    className={`eco-btn eco-btn-sm ${past ? 'eco-btn-secondary' : 'eco-btn-primary'}`}
-                  >
-                    View details <ChevronRight size={14} />
-                  </button>
-                  {past && registered && goTo && (
-                    <button type="button" onClick={() => goTo('records')} className="eco-btn eco-btn-primary eco-btn-sm">
-                      See my record
+                {past ? (
+                  <div className="mt-4 flex justify-end gap-2 border-t border-eco-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedActivity(activity)}
+                      className="eco-btn eco-btn-secondary eco-btn-sm"
+                    >
+                      View details <ChevronRight size={14} />
                     </button>
-                  )}
-                </div>
+                    {registered && goTo && (
+                      <button type="button" onClick={() => goTo('records')} className="eco-btn eco-btn-primary eco-btn-sm">
+                        See my record
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  // The main button shows where you stand: Join (open) or You're joined.
+                  <div className="mt-4 flex items-center gap-2 border-t border-eco-100 pt-3">
+                    {registered ? (
+                      <>
+                        <span className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-eco-50 px-3 py-2 text-xs font-extrabold text-eco-800">
+                          <CheckCircle size={14} /> You&apos;re joined
+                        </span>
+                        <button type="button" onClick={() => setSelectedActivity(activity)} className="eco-btn eco-btn-secondary eco-btn-sm">
+                          Details
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          disabled={isFull(activity) || isClosedToday(activity)}
+                          onClick={() => setRegistrationActivity(activity)}
+                          className={`eco-btn eco-btn-sm flex-1 ${isFull(activity) || isClosedToday(activity) ? 'eco-btn-muted' : 'eco-btn-primary'}`}
+                        >
+                          {isClosedToday(activity) ? 'Registration closed' : isFull(activity) ? 'Event full' : 'Join activity'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedActivity(activity)}
+                          className="rounded-lg px-2 py-1.5 text-[13px] font-extrabold text-eco-700 transition hover:bg-eco-50"
+                        >
+                          Details
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </article>
           )

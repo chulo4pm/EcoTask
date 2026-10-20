@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, useClockTick } from './activityTime';
 import {
@@ -1294,6 +1294,65 @@ function DeleteActivityModal({ activity, onConfirm, onClose }) {
   );
 }
 
+// Shown after an activity is deleted: the same animated check as the feedback thank-you,
+// then it fades away by itself. Says who was notified.
+function DeleteSuccessCard({ info, onClose }) {
+  const [leaving, setLeaving] = useState(false);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
+
+  useEffect(() => {
+    const fade = setTimeout(() => setLeaving(true), 3300);
+    const close = setTimeout(() => closeRef.current?.(), 3600);
+    return () => { clearTimeout(fade); clearTimeout(close); };
+  }, []);
+
+  const volunteerText = info.volunteers === 0
+    ? 'No volunteers had joined yet'
+    : `${info.volunteers} volunteer${info.volunteers === 1 ? '' : 's'} who joined`;
+
+  return (
+    <div
+      className={`eco-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center p-4 ${leaving ? 'feedback-leave' : ''}`}
+      onClick={() => closeRef.current?.()}
+    >
+      <div
+        className="eco-modal feedback-panel w-full max-w-md"
+        role="status"
+        aria-live="polite"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-12 text-center">
+          <div className="relative mx-auto h-16 w-16">
+            <span className="feedback-ring absolute inset-0 rounded-full border-2 border-eco-400" />
+            <svg viewBox="0 0 64 64" className="relative h-16 w-16" fill="none" aria-hidden="true">
+              <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke="#2e7d32" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+              <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke="#2e7d32" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <h4 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">Activity deleted</h4>
+          <p className="feedback-rise mt-1 text-sm font-bold text-slate-700">{info.title}</p>
+          <p className="feedback-rise mt-2 text-sm text-slate-500" style={{ animationDelay: '0.95s' }}>
+            {info.organizer
+              ? 'The organizer who posted it and the volunteers who joined will be notified with your reason.'
+              : 'The volunteers who joined will be notified with your reason.'}
+          </p>
+          <div className="feedback-rise mt-4 flex flex-wrap justify-center gap-2" style={{ animationDelay: '1.1s' }}>
+            {info.organizer && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-eco-50 px-3 py-1 text-xs font-bold text-eco-700">
+                <Building2 className="h-3.5 w-3.5" /> Organizer{info.organizerName ? ` · ${info.organizerName}` : ''}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-eco-50 px-3 py-1 text-xs font-bold text-eco-700">
+              <Users className="h-3.5 w-3.5" /> {volunteerText}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActivityOversightView() {
   useClockTick();
   const [activities, setActivities] = useState([]);
@@ -1309,6 +1368,8 @@ function ActivityOversightView() {
   const [notice, setNotice] = useState('');
   const [hideTarget, setHideTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  // Set after a successful delete: drives the animated "Activity deleted" card.
+  const [deletedInfo, setDeletedInfo] = useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -1352,8 +1413,13 @@ function ActivityOversightView() {
     setActivities((current) => current.filter((a) => a._id !== activity._id));
     if (panelId === activity._id) setPanelId(null);
     setError('');
-    setNotice(data.message);
     setDeleteTarget(null);
+    setDeletedInfo({
+      title: activity.title,
+      volunteers: Number(data.notifiedVolunteers) || 0,
+      organizer: Boolean(data.notifiedOrganizer),
+      organizerName: activity.organizer?.organizationName || activity.organizer?.name || '',
+    });
   };
 
   const assign = async (activity) => {
@@ -1581,6 +1647,8 @@ function ActivityOversightView() {
           onDelete={(activity) => setDeleteTarget(activities.find((a) => a._id === activity._id) || activity)}
         />
       )}
+
+      {deletedInfo && <DeleteSuccessCard info={deletedInfo} onClose={() => setDeletedInfo(null)} />}
 
       {deleteTarget && (
         <DeleteActivityModal
