@@ -1,5 +1,6 @@
 import FeedbackModal from './Feedback';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import './publishAnimation.css';
 import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
 import {
@@ -471,7 +472,7 @@ function OrganizerWorkspace({ account, onLogout }) {
                 setActivityFilter('All');
                 setOpenVolunteersFor(item.activity || null);
                 setActiveTab('Manage Activities');
-              } else if (item.type === 'activity_hidden' || item.type === 'activity_unhidden') {
+              } else if (item.type === 'activity_hidden' || item.type === 'activity_unhidden' || item.type === 'activity_deleted') {
                 setActiveTab('Manage Activities');
               } else if (item.type === 'activity_reported') {
                 setActiveTab('Reports');
@@ -1076,6 +1077,61 @@ function FieldError({ message }) {
 
 const inputState = (error) => (error ? 'border-rose-400 bg-rose-50/40 hover:border-rose-400 focus:border-rose-500 focus:shadow-[0_0_0_4px_rgb(254_205_211/0.6)]' : '');
 
+// Shown right after an activity is published. Plays the check animation, then closes by itself.
+const PUBLISH_LEAVES = [
+  { x: '-150px', y: '-70px', r: '-200deg', c: '#66bb6a' },
+  { x: '150px', y: '-60px', r: '220deg', c: '#81c784' },
+  { x: '-190px', y: '60px', r: '140deg', c: '#a5d6a7' },
+  { x: '190px', y: '70px', r: '-160deg', c: '#66bb6a' },
+  { x: '-90px', y: '-120px', r: '90deg', c: '#2e7d32' },
+  { x: '100px', y: '-125px', r: '-120deg', c: '#a5d6a7' },
+];
+
+function PublishSuccessCard({ info, onClose }) {
+  const [leaving, setLeaving] = useState(false);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
+
+  useEffect(() => {
+    const fade = setTimeout(() => setLeaving(true), 3200);
+    const close = setTimeout(() => closeRef.current?.(), 3500);
+    return () => { clearTimeout(fade); clearTimeout(close); };
+  }, []);
+
+  return (
+    <div
+      className={`publish-backdrop eco-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center p-4 ${leaving ? 'publish-leaving' : ''}`}
+      onClick={() => closeRef.current?.()}
+    >
+      <div
+        className="publish-panel eco-modal relative w-full max-w-sm overflow-visible px-7 pb-7 pt-9 text-center"
+        role="status"
+        aria-live="polite"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {PUBLISH_LEAVES.map((leaf, index) => (
+          <span key={index} className="publish-leaf" style={{ '--x': leaf.x, '--y': leaf.y, '--r': leaf.r, background: leaf.c }} />
+        ))}
+        <div className="relative mx-auto h-[84px] w-[84px]">
+          <span className="publish-ring absolute inset-0 rounded-full border-2 border-eco-400" />
+          <svg className="relative" width="84" height="84" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <circle className="publish-fill" cx="32" cy="32" r="28" fill="#e8f5e9" />
+            <circle className="publish-circle" cx="32" cy="32" r="28" stroke="#2e7d32" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+            <path className="publish-tick" d="M19 33 l9 9 l17 -19" stroke="#2e7d32" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h4 className="publish-rise mt-4 text-xl font-extrabold text-eco-900" style={{ '--d': '0.8s' }}>Activity published!</h4>
+        <p className="publish-rise mt-1 text-sm font-bold text-eco-700" style={{ '--d': '0.9s' }}>{info.title}</p>
+        <p className="publish-rise mt-1.5 text-sm text-slate-500" style={{ '--d': '1s' }}>It&apos;s now live. Volunteers can see it and join.</p>
+        <div className="publish-rise mt-4 flex flex-wrap justify-center gap-2" style={{ '--d': '1.1s' }}>
+          {info.when && <span className="rounded-full bg-eco-50 px-3 py-1 text-xs font-bold text-eco-700">{info.when}</span>}
+          {info.location && <span className="rounded-full bg-eco-50 px-3 py-1 text-xs font-bold text-eco-700">{info.location}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CreateActivityView() {
   const [formData, setFormData] = useState(EMPTY_ACTIVITY_FORM);
   const [errors, setErrors] = useState({});
@@ -1084,6 +1140,8 @@ function CreateActivityView() {
   const [saving, setSaving] = useState(false);
   const [notification, setNotification] = useState('');
   const [showPublishConfirmation, setShowPublishConfirmation] = useState(false);
+  // Details of the activity that was just published (drives the success animation).
+  const [published, setPublished] = useState(null);
 
   // Show an error only after the field was touched (or after pressing Publish)
   const shownError = (field) => (touched[field] ? errors[field] : '');
@@ -1194,6 +1252,17 @@ function CreateActivityView() {
         throw new Error(data.message || 'Unable to publish activity');
       }
 
+      const publishedDate = formData.date ? new Date(`${formData.date}T00:00:00`) : null;
+      setPublished({
+        title: formData.title.trim(),
+        location: formData.location.trim(),
+        when: [
+          publishedDate && !Number.isNaN(publishedDate.getTime())
+            ? publishedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : '',
+          formData.time,
+        ].filter(Boolean).join(' · '),
+      });
       setFormData(EMPTY_ACTIVITY_FORM);
       setErrors({});
       setTouched({});
@@ -1459,6 +1528,8 @@ function CreateActivityView() {
           </div>
         </div>
       </div>
+
+      {published && <PublishSuccessCard info={published} onClose={() => setPublished(null)} />}
 
       {showPublishConfirmation && (
         <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">

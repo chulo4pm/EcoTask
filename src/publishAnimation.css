@@ -1,0 +1,42 @@
+/* "Activity published!" card: the circle draws itself, a ring pulses, leaves float out,
+   then the text rises in. Same feel as the feedback thank-you. The card closes by itself. */
+
+@keyframes publish-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes publish-panel {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes publish-draw { to { stroke-dashoffset: 0; } }
+@keyframes publish-ring {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+@keyframes publish-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes publish-burst {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.3) rotate(0); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(1) rotate(var(--r)); }
+}
+
+.publish-backdrop { animation: publish-fade 0.25s ease-out both; }
+.publish-panel { animation: publish-panel 0.36s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.publish-ring { animation: publish-ring 0.9s ease-out 0.55s both; }
+.publish-circle { stroke-dasharray: 176; stroke-dashoffset: 176; animation: publish-draw 0.55s ease-out 0.1s forwards; }
+.publish-tick { stroke-dasharray: 48; stroke-dashoffset: 48; animation: publish-draw 0.35s ease-out 0.6s forwards; }
+.publish-fill { opacity: 0; animation: publish-fade 0.3s ease-out 0.55s forwards; }
+.publish-rise { animation: publish-rise 0.4s ease-out both; animation-delay: var(--d, 0.8s); }
+.publish-leaf {
+  position: absolute; left: 50%; top: 60px; width: 10px; height: 16px; border-radius: 0 100% 0 100%;
+  opacity: 0; animation: publish-burst 1s ease-out 0.6s both;
+}
+.publish-leaving { animation: publish-fade 0.3s ease-in reverse both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .publish-backdrop, .publish-panel, .publish-ring, .publish-rise, .publish-leaf { animation: none; }
+  .publish-leaf { display: none; }
+  .publish-circle, .publish-tick { animation: none; stroke-dashoffset: 0; }
+  .publish-fill { animation: none; opacity: 1; }
+}

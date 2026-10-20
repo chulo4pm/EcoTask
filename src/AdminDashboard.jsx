@@ -1056,7 +1056,7 @@ const HISTORY_DOT = {
 };
 
 // Side panel opened with "View": details, sign-ups, attendance, reports and history.
-function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnhide }) {
+function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnhide, onDelete }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -1199,10 +1199,97 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
             ) : (
               <button type="button" onClick={() => onHide(activity)} className="eco-btn eco-btn-danger-soft eco-btn-sm">Hide</button>
             )}
+            {status !== 'Completed' && onDelete && (
+              <button type="button" onClick={() => onDelete(activity)} className="eco-btn eco-btn-danger-soft eco-btn-sm">
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
+            )}
             <button type="button" onClick={onClose} className="eco-btn eco-btn-primary eco-btn-sm">Close</button>
           </div>
         )}
       </aside>
+    </div>
+  );
+}
+
+const DELETE_REASON_MIN = 10;
+const DELETE_REASON_MAX = 300;
+
+// Delete card: the admin must type a reason; every joined volunteer and the organizer see it.
+function DeleteActivityModal({ activity, onConfirm, onClose }) {
+  const [reason, setReason] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  const joined = signupCount(activity);
+  const length = reason.trim().length;
+  const tooShort = length < DELETE_REASON_MIN;
+  const organizerName = activity.organizer?.organizationName || activity.organizer?.name || '';
+
+  const submit = async () => {
+    if (tooShort || deleting) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await onConfirm(reason.trim());
+    } catch (requestError) {
+      setError(requestError.message);
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center p-4 text-slate-800">
+      <div className="absolute inset-0" onClick={deleting ? undefined : onClose} />
+      <div className="ecotask-modal-panel eco-modal relative z-10 w-full max-w-lg p-6" role="dialog" aria-modal="true" aria-label="Delete activity">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+          <Trash2 className="h-5 w-5" />
+        </span>
+        <h3 className="mt-3 text-xl font-extrabold text-rose-900">Delete this activity?</h3>
+        <p className="mt-1 text-sm text-slate-500">This permanently removes the activity. This can&apos;t be undone.</p>
+
+        <div className="mt-4 rounded-xl border border-eco-200 bg-eco-50 px-4 py-3">
+          <p className="text-sm font-extrabold text-eco-900">{activity.title}</p>
+          <p className="mt-0.5 text-xs text-slate-600">
+            {organizerName ? `by ${organizerName} · ` : ''}{whenLabel(activity)} · {getActivityStatus(activity)}
+          </p>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+          <p className="text-xl font-extrabold">{joined}</p>
+          <p className="text-xs">{joined === 1 ? 'volunteer will be notified' : 'volunteers will be notified'}</p>
+        </div>
+
+        <div className="mt-4">
+          <label className="eco-label" htmlFor="delete-activity-reason">Reason for deleting <span className="text-rose-600">*</span></label>
+          <textarea
+            id="delete-activity-reason"
+            rows={4}
+            maxLength={DELETE_REASON_MAX}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={`Tell them why (at least ${DELETE_REASON_MIN} characters)…`}
+            className={`eco-input resize-none ${length > 0 ? '!border-rose-400 focus:!ring-rose-200' : ''}`}
+            disabled={deleting}
+            autoFocus
+          />
+          <div className="mt-1 flex items-center justify-between text-[11px]">
+            <span className={tooShort ? 'font-semibold text-rose-600' : 'text-slate-400'}>
+              {tooShort ? `Write at least ${DELETE_REASON_MIN} characters to continue.` : 'Everyone will see this reason.'}
+            </span>
+            <span className={tooShort ? 'text-slate-400' : 'font-bold text-eco-700'}>{reason.length} / {DELETE_REASON_MAX}</span>
+          </div>
+        </div>
+
+        {error && <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">{error}</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={deleting} className="eco-btn eco-btn-secondary">Cancel</button>
+          <button type="button" onClick={submit} disabled={tooShort || deleting} className="eco-btn eco-btn-danger">
+            {deleting ? 'Deleting...' : 'Delete activity'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1221,6 +1308,7 @@ function ActivityOversightView() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [hideTarget, setHideTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -1253,6 +1341,19 @@ function ActivityOversightView() {
     setNotice(data.message);
     setHideTarget(null);
     setPanelRefresh((n) => n + 1);
+  };
+
+  // Deletes the activity for good. The server notifies the joined volunteers and the organizer.
+  const deleteActivity = async (activity, reason) => {
+    const data = await adminFetch(`/api/admin/activities/${activity._id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason }),
+    });
+    setActivities((current) => current.filter((a) => a._id !== activity._id));
+    if (panelId === activity._id) setPanelId(null);
+    setError('');
+    setNotice(data.message);
+    setDeleteTarget(null);
   };
 
   const assign = async (activity) => {
@@ -1448,6 +1549,11 @@ function ActivityOversightView() {
                     ) : (
                       <button type="button" onClick={() => setHideTarget(activity)} className="eco-btn eco-btn-danger-soft eco-btn-sm">Hide</button>
                     )}
+                    {getActivityStatus(activity) !== 'Completed' && (
+                      <button type="button" onClick={() => setDeleteTarget(activity)} className="eco-btn eco-btn-danger-soft eco-btn-sm ml-1.5">
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
                 );
@@ -1472,6 +1578,15 @@ function ActivityOversightView() {
           onClose={() => setPanelId(null)}
           onHide={(activity) => setHideTarget(activities.find((a) => a._id === activity._id) || activity)}
           onUnhide={(activity) => setVisibility(activities.find((a) => a._id === activity._id) || activity, false).catch((e) => setError(e.message))}
+          onDelete={(activity) => setDeleteTarget(activities.find((a) => a._id === activity._id) || activity)}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteActivityModal
+          activity={deleteTarget}
+          onConfirm={(reason) => deleteActivity(deleteTarget, reason)}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
 
