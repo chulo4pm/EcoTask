@@ -2625,6 +2625,7 @@ function ParticipationRecordView() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Unable to finalize attendance');
+      const issuedNow = participants.filter((p) => p.attendance === 'present' && !p.certificateIssued).length;
       const updated = participants.map((p) => {
         const attendance = p.attendance || 'absent';
         return { ...p, attendance, certificateIssued: attendance === 'present' ? true : p.certificateIssued };
@@ -2633,7 +2634,7 @@ function ParticipationRecordView() {
       setActivities((current) => current.map((a) => (
         a._id === selectedActivity ? { ...a, attendanceFinalized: true, attendance: summarizeParticipants(updated) } : a
       )));
-      setFinalizeResult({ type: 'success', message: data.message || 'Attendance finalized.' });
+      setFinalizeResult({ type: 'success', message: data.message || 'Attendance finalized.', issued: issuedNow });
     } catch (requestError) {
       setFinalizeResult({
         type: 'error',
@@ -2965,21 +2966,42 @@ function ParticipationRecordView() {
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="finalize-attendance-title"
-              className="ecotask-modal-panel eco-modal relative z-10 w-full max-w-md overflow-hidden"
+              className={`ecotask-modal-panel eco-modal relative z-10 w-full max-w-md ${done ? 'overflow-visible' : 'overflow-hidden'}`}
             >
               <div className="px-6 pb-2 pt-6 text-center">
-                <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border ${done ? 'border-eco-200 bg-eco-50 text-eco-700' : 'border-amber-200 bg-amber-50 text-amber-600'}`}>
-                  {done ? <CheckCircle2 className="h-6 w-6" /> : <Award className="h-6 w-6" />}
-                </span>
-                <h3 id="finalize-attendance-title" className="mt-4 text-lg font-extrabold text-slate-800">
+                {done ? (
+                  <>
+                    {PUBLISH_LEAVES.map((leaf, index) => (
+                      <span key={index} className="publish-leaf" style={{ '--x': leaf.x, '--y': leaf.y, '--r': leaf.r, background: leaf.c }} />
+                    ))}
+                    <div className="relative mx-auto h-[84px] w-[84px]">
+                      <span className="publish-ring absolute inset-0 rounded-full border-2 border-eco-400" />
+                      <svg className="relative" width="84" height="84" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                        <circle className="publish-fill" cx="32" cy="32" r="28" fill="#e8f5e9" />
+                        <circle className="publish-circle" cx="32" cy="32" r="28" stroke="#2e7d32" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+                        <path className="publish-tick" d="M19 33 l9 9 l17 -19" stroke="#2e7d32" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  </>
+                ) : (
+                  <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-600">
+                    <Award className="h-6 w-6" />
+                  </span>
+                )}
+                <h3 id="finalize-attendance-title" className={`mt-4 text-lg font-extrabold text-slate-800 ${done ? 'publish-rise' : ''}`} style={done ? { '--d': '0.8s' } : undefined}>
                   {done ? 'Attendance finalized' : 'Finalize attendance?'}
                 </h3>
-                <p className="mt-1 text-sm font-semibold text-slate-700 [overflow-wrap:anywhere]">{activeActivity?.title}</p>
+                <p className={`mt-1 text-sm font-semibold text-slate-700 [overflow-wrap:anywhere] ${done ? 'publish-rise' : ''}`} style={done ? { '--d': '0.9s' } : undefined}>{activeActivity?.title}</p>
+                {done && finalizeResult.issued > 0 && (
+                  <span className="publish-rise mt-3 inline-flex items-center gap-1.5 rounded-full bg-eco-50 px-3 py-1 text-xs font-bold text-eco-700" style={{ '--d': '1s' }}>
+                    <Award className="h-3.5 w-3.5" /> {finalizeResult.issued} certificate{finalizeResult.issued === 1 ? '' : 's'} issued
+                  </span>
+                )}
               </div>
 
               <div className="space-y-3 px-6 py-4">
                 {done ? (
-                  <div className="rounded-xl border border-eco-200 bg-eco-50 p-3 text-center text-xs font-semibold leading-relaxed text-eco-800">
+                  <div className="publish-rise rounded-xl border border-eco-200 bg-eco-50 p-3 text-center text-xs font-semibold leading-relaxed text-eco-800" style={{ '--d': '1.1s' }}>
                     {finalizeResult.message}
                   </div>
                 ) : (
