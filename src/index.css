@@ -743,6 +743,38 @@ body {
   animation: ecotask-drawer 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Admin "View" side panel: slides in from the right, content rises in one by one, slides out on close. */
+@keyframes ecotask-slide-in-right {
+  from { transform: translateX(100%); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes ecotask-slide-out-right {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0.6; }
+}
+@keyframes ecotask-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.ecotask-side-panel {
+  animation: ecotask-slide-in-right 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.ecotask-side-panel-out {
+  animation: ecotask-slide-out-right 240ms cubic-bezier(0.55, 0, 0.55, 0.2) both;
+}
+.ecotask-side-backdrop-out {
+  animation: ecotask-backdrop-out 240ms ease-in both;
+}
+.ecotask-stagger > * {
+  animation: ecotask-card-enter 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.ecotask-stagger > *:nth-child(1) { animation-delay: 120ms; }
+.ecotask-stagger > *:nth-child(2) { animation-delay: 190ms; }
+.ecotask-stagger > *:nth-child(3) { animation-delay: 260ms; }
+.ecotask-stagger > *:nth-child(4) { animation-delay: 330ms; }
+.ecotask-stagger > *:nth-child(5) { animation-delay: 400ms; }
+.ecotask-stagger > *:nth-child(n+6) { animation-delay: 470ms; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

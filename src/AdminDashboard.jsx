@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, useClockTick } from './activityTime';
 import {
@@ -1056,9 +1057,15 @@ const HISTORY_DOT = {
 };
 
 // Side panel opened with "View": details, sign-ups, attendance, reports and history.
-function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnhide, onDelete }) {
+function ActivityOversightPanel({ activityId, refreshKey, onClose: closePanel, onHide, onUnhide, onDelete }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  // Close = play the slide-out first, then tell the parent.
+  const [closing, setClosing] = useState(false);
+  const onClose = useCallback(() => {
+    setClosing(true);
+    setTimeout(closePanel, 230);
+  }, [closePanel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1082,8 +1089,8 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end text-slate-800" role="dialog" aria-modal="true" aria-label="Activity details">
-      <div className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
-      <aside className="eco-scroll relative z-10 h-full w-full max-w-[420px] overflow-y-auto bg-white shadow-2xl">
+      <div className={`ecotask-modal-backdrop absolute inset-0 bg-slate-900/30 ${closing ? 'ecotask-side-backdrop-out' : ''}`} onClick={onClose} />
+      <aside className={`eco-scroll relative z-10 h-full w-full max-w-[420px] overflow-y-auto bg-white shadow-2xl ${closing ? 'ecotask-side-panel-out' : 'ecotask-side-panel'}`}>
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-eco-100 bg-white/95 px-5 py-3 backdrop-blur">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Activity details</p>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
@@ -1095,7 +1102,7 @@ function ActivityOversightPanel({ activityId, refreshKey, onClose, onHide, onUnh
         {error && <p className="m-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p>}
 
         {activity && (
-          <div className="space-y-5 p-5">
+          <div className="ecotask-stagger space-y-5 p-5">
             {/* Photo banner (green placeholder when there's no photo) */}
             <div className="relative -mx-5 -mt-5 h-48 overflow-hidden bg-gradient-to-br from-eco-700 via-eco-600 to-eco-400">
               {activity.coverImage ? (
@@ -1805,7 +1812,7 @@ function ReportsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  // { type: 'dismiss' | 'dismiss-all' | 'hide', group, report? }
+  // { type: 'dismiss' | 'dismiss-all' | 'hide' | 'unhide', group, report? }
   const [action, setAction] = useState(null);
   // Group whose activity details are open in the details card.
   const [detailsGroup, setDetailsGroup] = useState(null);
@@ -1894,6 +1901,7 @@ function ReportsView() {
   };
 
   const resolve = async (note) => {
+    let nextFilter = filter;
     if (action.type === 'dismiss') {
       const data = await patchReport(action.report._id, 'dismiss', note);
       setNotice(data.message);
@@ -1902,13 +1910,22 @@ function ReportsView() {
         await patchReport(report._id, 'dismiss', note);
       }
       setNotice(`${action.group.openReports.length} report(s) dismissed.`);
+    } else if (action.type === 'unhide') {
+      // The activity becomes visible again and the server puts its reports back to Open.
+      const data = await adminFetch(`/api/admin/activities/${action.group.activity._id}/visibility`, {
+        method: 'PATCH',
+        body: JSON.stringify({ hidden: false }),
+      });
+      setNotice(`${data.message} Its reports are open again.`);
+      setFilter('open');
+      nextFilter = 'open';
     } else {
       // Hiding via any open report closes every open report on that activity
       const data = await patchReport(action.group.openReports[0]._id, 'hide', note);
       setNotice(data.message);
     }
     setAction(null);
-    load(filter);
+    load(nextFilter);
     loadSummary();
   };
 
@@ -1927,6 +1944,11 @@ function ReportsView() {
       label: 'Reason',
       placeholder: 'e.g. The activity details were misleading.',
       confirmLabel: 'Hide activity',
+    },
+    unhide: {
+      title: 'Make this activity visible again?',
+      description: 'Volunteers will be able to see and join it again, and the organizer will be notified. Its reports go back to Open so you can review them again.',
+      confirmLabel: 'Unhide activity',
     },
     'dismiss-all': {
       title: 'Dismiss all open reports?',
@@ -2073,6 +2095,11 @@ function ReportsView() {
                       </button>
                     )}
                     </>)}
+                    {activity.isHidden && (
+                      <button type="button" onClick={() => openAction({ type: 'unhide', group })} className="eco-btn eco-btn-secondary eco-btn-sm">
+                        <Eye className="h-3.5 w-3.5" /> Unhide activity
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -2146,7 +2173,15 @@ function ReportsView() {
         />
       )}
 
-      {action && (() => {
+      {action?.type === 'unhide' && (
+        <ReasonModal
+          {...modalText.unhide}
+          onConfirm={resolve}
+          onClose={() => setAction(null)}
+        />
+      )}
+
+      {action && action.type !== 'unhide' && (() => {
         const reporterCount = action.type === 'dismiss' ? 1 : action.group.openReports.length;
         return (
           <ReasonModal
@@ -3157,6 +3192,44 @@ const CharCount = ({ value, max }) => (
   </span>
 );
 
+// Small confirmation card with the same animated check as the feedback thank-you.
+// tone "deleted" uses a calm slate color instead of green. It closes by itself.
+function ActionSuccessCard({ info, onClose }) {
+  const [leaving, setLeaving] = useState(false);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
+
+  useEffect(() => {
+    const fade = setTimeout(() => setLeaving(true), 2400);
+    const close = setTimeout(() => closeRef.current?.(), 2700);
+    return () => { clearTimeout(fade); clearTimeout(close); };
+  }, []);
+
+  const color = info.tone === 'deleted' ? '#64748b' : '#2e7d32';
+  // Rendered on the page itself so a parent card can never clip or offset it.
+  return createPortal(
+    <div
+      className={`eco-modal-backdrop fixed inset-0 z-[300] flex items-center justify-center p-4 ${leaving ? 'feedback-leave' : ''}`}
+      onClick={() => closeRef.current?.()}
+    >
+      <div className="eco-modal feedback-panel w-full max-w-sm" role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-12 text-center">
+          <div className="relative mx-auto h-16 w-16">
+            <span className={`feedback-ring absolute inset-0 rounded-full border-2 ${info.tone === 'deleted' ? 'border-slate-400' : 'border-eco-400'}`} />
+            <svg viewBox="0 0 64 64" className="relative h-16 w-16" fill="none" aria-hidden="true">
+              <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke={color} strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+              <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke={color} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <h4 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">{info.title}</h4>
+          {info.text && <p className="feedback-rise mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">{info.text}</p>}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function AnnouncementsView() {
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3180,6 +3253,8 @@ function AnnouncementsView() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  // Animated confirmation after posting or deleting an announcement.
+  const [successInfo, setSuccessInfo] = useState(null);
 
   const authHeaders = (json = false) => {
     const adminInfo = JSON.parse(localStorage.getItem('adminInfo') || '{}');
@@ -3240,7 +3315,8 @@ function AnnouncementsView() {
       if (!response.ok) throw new Error(data.message || 'Unable to post announcement');
       setAnnouncements((current) => [data, ...current]);
       setFormData(emptyForm);
-      notify('Announcement posted successfully!', 'success');
+      setNotification('');
+      setSuccessInfo({ title: 'Announcement posted!', text: data.title || '', tone: 'success' });
     } catch (requestError) {
       notify(requestError.message);
     } finally {
@@ -3260,8 +3336,9 @@ function AnnouncementsView() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'Unable to delete announcement');
       setAnnouncements((current) => current.filter((announcement) => announcement._id !== deleteTarget._id));
+      setSuccessInfo({ title: 'Announcement deleted', text: deleteTarget.title || '', tone: 'deleted' });
       setDeleteTarget(null);
-      notify('Announcement deleted.', 'success');
+      setNotification('');
     } catch (requestError) {
       setDeleteError(requestError.message);
     } finally {
@@ -3346,6 +3423,7 @@ function AnnouncementsView() {
         <CardTitle icon={Megaphone}>New Announcement</CardTitle>
 
         <div className="p-5">
+          {successInfo && <ActionSuccessCard info={successInfo} onClose={() => setSuccessInfo(null)} />}
           {notification && (
             <div className={`mb-4 flex items-center gap-2 rounded-xl border p-3 text-xs font-bold ${
               isSuccess ? 'border-eco-200 bg-eco-50 text-eco-800' : 'border-amber-200 bg-amber-50 text-amber-800'

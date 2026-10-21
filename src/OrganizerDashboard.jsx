@@ -1,5 +1,6 @@
 import FeedbackModal from './Feedback';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import './publishAnimation.css';
 import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
@@ -1672,12 +1673,51 @@ const matchesDateChip = (activity, key) => (
         : true
 );
 
+// Small confirmation card with the same animated check as the feedback thank-you.
+// tone "deleted" uses a calm slate color instead of green. It closes by itself.
+function ActionSuccessCard({ info, onClose }) {
+  const [leaving, setLeaving] = useState(false);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
+
+  useEffect(() => {
+    const fade = setTimeout(() => setLeaving(true), 2400);
+    const close = setTimeout(() => closeRef.current?.(), 2700);
+    return () => { clearTimeout(fade); clearTimeout(close); };
+  }, []);
+
+  const color = info.tone === 'deleted' ? '#64748b' : '#2e7d32';
+  // Rendered on the page itself so a parent card can never clip or offset it.
+  return createPortal(
+    <div
+      className={`eco-modal-backdrop fixed inset-0 z-[300] flex items-center justify-center p-4 ${leaving ? 'feedback-leave' : ''}`}
+      onClick={() => closeRef.current?.()}
+    >
+      <div className="eco-modal feedback-panel w-full max-w-sm" role="status" aria-live="polite" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-12 text-center">
+          <div className="relative mx-auto h-16 w-16">
+            <span className={`feedback-ring absolute inset-0 rounded-full border-2 ${info.tone === 'deleted' ? 'border-slate-400' : 'border-eco-400'}`} />
+            <svg viewBox="0 0 64 64" className="relative h-16 w-16" fill="none" aria-hidden="true">
+              <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke={color} strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+              <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke={color} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <h4 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">{info.title}</h4>
+          {info.text && <p className="feedback-rise mt-1 text-sm text-slate-500 [overflow-wrap:anywhere]">{info.text}</p>}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVolunteersOpened }) {
   useClockTick();
   const [selectedActivityForVolunteers, setSelectedActivityForVolunteers] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [deletedInfo, setDeletedInfo] = useState(null);
   const [editingActivity, setEditingActivity] = useState(null);
   const [editOriginal, setEditOriginal] = useState(null); // snapshot to detect changes + edit rules
   const [editErrors, setEditErrors] = useState({});
@@ -1772,6 +1812,7 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Unable to delete activity');
       setActivities((current) => current.filter((item) => item._id !== deleteTarget._id));
+      setDeletedInfo({ title: 'Activity deleted', text: deleteTarget.title || '', tone: 'deleted' });
       setDeleteTarget(null);
     } catch (requestError) {
       setDeleteError(requestError.message === 'Failed to fetch'
@@ -2250,6 +2291,8 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
           </div>
         );
       })()}
+
+      {deletedInfo && <ActionSuccessCard info={deletedInfo} onClose={() => setDeletedInfo(null)} />}
 
       {deleteTarget && (() => {
         const joinedCount = deleteTarget.participantCount ?? deleteTarget.participants?.length ?? 0;
