@@ -1380,7 +1380,7 @@ function Activities({ goTo }) {
       updateActivityAfterResponse(data)
       setRegisteredActivities((current) => [...current, registrationActivity.id])
       setJoinSuccessLeaving(false)
-      setJoinSuccess(registrationActivity)
+      setJoinSuccess({ ...registrationActivity, kind: 'join' })
       setRegistrationActivity(null)
     } catch (requestError) {
       alert(requestError.message)
@@ -1407,6 +1407,8 @@ function Activities({ goTo }) {
           : activity
       )))
       setRegisteredActivities((current) => current.filter((id) => id !== cancelActivity.id))
+      setJoinSuccessLeaving(false)
+      setJoinSuccess({ ...cancelActivity, kind: 'leave' })
       setCancelActivity(null)
     } catch (requestError) {
       alert(requestError.message)
@@ -1893,15 +1895,21 @@ function Activities({ goTo }) {
         >
           <div className="ecotask-modal-panel eco-modal w-full max-w-[380px] px-6 py-10 text-center" onClick={(e) => e.stopPropagation()}>
             <div className="relative mx-auto h-16 w-16">
-              <span className="feedback-ring absolute inset-0 rounded-full border-2 border-eco-400" />
+              <span className={`feedback-ring absolute inset-0 rounded-full border-2 ${joinSuccess.kind === 'leave' ? 'border-slate-400' : 'border-eco-400'}`} />
               <svg viewBox="0 0 64 64" className="relative h-16 w-16" fill="none" aria-hidden="true">
-                <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke="#2e7d32" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
-                <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke="#2e7d32" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+                <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke={joinSuccess.kind === 'leave' ? '#64748b' : '#2e7d32'} strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+                <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke={joinSuccess.kind === 'leave' ? '#64748b' : '#2e7d32'} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
-            <h2 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">You&apos;re registered!</h2>
+            <h2 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">
+              {joinSuccess.kind === 'leave' ? "You've unregistered" : "You're registered!"}
+            </h2>
             <p className="feedback-rise mt-1 text-sm text-gray-500">
-              <span className="font-bold text-eco-700">{joinSuccess.title}</span> is now in My activities.
+              {joinSuccess.kind === 'leave' ? (
+                <>Your spot in <span className="font-bold text-gray-700">{joinSuccess.title}</span> is open again. You can rejoin anytime from Find activities.</>
+              ) : (
+                <><span className="font-bold text-eco-700">{joinSuccess.title}</span> is now in My activities.</>
+              )}
             </p>
           </div>
         </div>
