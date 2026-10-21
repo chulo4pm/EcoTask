@@ -1185,6 +1185,15 @@ function Activities({ goTo }) {
   // My report per activity id: { status, replyToReporter }
   const [myReports, setMyReports] = useState({})
   const [pageNotice, setPageNotice] = useState('')
+  // Shown after a successful join: animated check, then fades out by itself.
+  const [joinSuccess, setJoinSuccess] = useState(null)
+  const [joinSuccessLeaving, setJoinSuccessLeaving] = useState(false)
+  useEffect(() => {
+    if (!joinSuccess) return undefined
+    const fade = setTimeout(() => setJoinSuccessLeaving(true), 2300)
+    const close = setTimeout(() => { setJoinSuccess(null); setJoinSuccessLeaving(false) }, 2600)
+    return () => { clearTimeout(fade); clearTimeout(close) }
+  }, [joinSuccess])
   const [registeredActivities, setRegisteredActivities] = useState([])
   const [activityFilter, setActivityFilter] = useState('All')
   // Three lists: "find" (open to join), "mine" (I'm registered) and "past" (finished).
@@ -1370,6 +1379,8 @@ function Activities({ goTo }) {
       if (!response.ok) throw new Error(data.message || 'Unable to join activity')
       updateActivityAfterResponse(data)
       setRegisteredActivities((current) => [...current, registrationActivity.id])
+      setJoinSuccessLeaving(false)
+      setJoinSuccess(registrationActivity)
       setRegistrationActivity(null)
     } catch (requestError) {
       alert(requestError.message)
@@ -1870,6 +1881,28 @@ function Activities({ goTo }) {
                 Register
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {joinSuccess && (
+        <div
+          className={`ecotask-modal-backdrop eco-modal-backdrop fixed inset-0 z-[350] flex items-center justify-center p-4 transition-opacity duration-300 ${joinSuccessLeaving ? 'opacity-0' : 'opacity-100'}`}
+          onClick={() => { setJoinSuccess(null); setJoinSuccessLeaving(false) }}
+          role="status"
+        >
+          <div className="ecotask-modal-panel eco-modal w-full max-w-[380px] px-6 py-10 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="relative mx-auto h-16 w-16">
+              <span className="feedback-ring absolute inset-0 rounded-full border-2 border-eco-400" />
+              <svg viewBox="0 0 64 64" className="relative h-16 w-16" fill="none" aria-hidden="true">
+                <circle className="feedback-check-circle" cx="32" cy="32" r="28" stroke="#2e7d32" strokeWidth="4" strokeLinecap="round" transform="rotate(-90 32 32)" />
+                <path className="feedback-check-tick" d="M19 33 l9 9 l17 -19" stroke="#2e7d32" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <h2 className="feedback-rise mt-4 text-base font-extrabold text-eco-900">You&apos;re registered!</h2>
+            <p className="feedback-rise mt-1 text-sm text-gray-500">
+              <span className="font-bold text-eco-700">{joinSuccess.title}</span> is now in My activities.
+            </p>
           </div>
         </div>
       )}
