@@ -3,6 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 require('dotenv').config();
 
@@ -21,6 +22,9 @@ const app = express();
 // see each visitor's real IP instead of treating everyone as one user.
 app.set('trust proxy', 1);
 
+// Security headers (clickjacking, MIME sniffing, HTTPS-only, hides X-Powered-By).
+// cross-origin is needed so the Vercel frontend can load activity images from this API.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors());
 app.use(express.json());
 // Public files (activity cover images). Organizer documents are in /private-uploads
