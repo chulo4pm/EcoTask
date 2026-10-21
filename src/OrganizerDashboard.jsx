@@ -5,27 +5,21 @@ import { useTabRoute } from './useTabRoute';
 import { formatTimeRange, getActivityStatus, parseTimeLabel, useClockTick } from './activityTime';
 import {
   Activity,
-  ArrowLeft,
   Award,
   BookOpen,
   Calendar,
   CalendarClock,
-  CheckCircle,
   CheckCircle2,
   ChevronDown,
   Clock,
-  Droplets,
   Edit3,
   FolderOpen,
   Home,
-  Layers,
   LogOut,
   MapPin,
   Menu,
-  PlayCircle,
   PlusCircle,
   Search,
-  Sprout,
   Trash2,
   Trees,
   User,
@@ -1167,6 +1161,15 @@ function PublishSuccessCard({ info, onClose }) {
   );
 }
 
+const getOrganizerDisplayName = () => {
+  try {
+    const info = JSON.parse(localStorage.getItem('organizerInfo') || '{}');
+    return info.organizationName || info.name || '';
+  } catch {
+    return '';
+  }
+};
+
 function CreateActivityView({ draft: formData, setDraft: setFormData }) {
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
@@ -1532,8 +1535,8 @@ function CreateActivityView({ draft: formData, setDraft: setFormData }) {
           <span className="h-2 w-2 rounded-full bg-eco-500 shadow-[0_0_0_4px_rgba(102,187,106,0.25)]" />
           Volunteer view preview
         </p>
-        <div className="eco-card overflow-hidden">
-          <div className="relative h-48 overflow-hidden bg-eco-50">
+        <div className="eco-card flex flex-col overflow-hidden text-slate-800">
+          <div className="relative h-40 overflow-hidden bg-gradient-to-br from-eco-100 to-eco-50">
             {formData.coverImage ? (
               <img src={formData.coverImage} alt="Activity preview" className="h-full w-full object-cover" />
             ) : (
@@ -1542,39 +1545,53 @@ function CreateActivityView({ draft: formData, setDraft: setFormData }) {
                 Banner preview
               </div>
             )}
-            {formData.coverImage && <div className="absolute inset-0 bg-gradient-to-t from-eco-950/50 via-transparent to-transparent" />}
-            <button
-              type="button"
-              disabled
-              className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-eco-700 shadow-md"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <span className="eco-badge eco-badge-blue absolute right-3 top-3">Upcoming</span>
+            {formData.coverImage && <div className="absolute inset-0 bg-gradient-to-t from-eco-950/55 via-transparent to-transparent" />}
+            <p className={`absolute bottom-3 left-4 flex items-center gap-1.5 text-xs font-semibold ${formData.coverImage ? 'text-white drop-shadow' : 'text-eco-700'}`}>
+              <Calendar className="h-3.5 w-3.5" /> {formData.date ? new Date(`${formData.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date'}
+              <span className="opacity-60">•</span>
+              <Clock className="h-3.5 w-3.5" /> {formData.time ? formatTimeRange(formData) : 'Time'}
+            </p>
           </div>
 
-          <div className="p-5">
-            <div className="flex items-start justify-between gap-3">
-              <h4 className="text-lg font-extrabold uppercase text-slate-800 [overflow-wrap:anywhere]">{formData.title || 'Activity title'}</h4>
-              <span className="eco-badge eco-badge-green shrink-0">
-                <User className="h-3 w-3" /> 0/{formData.volunteerLimit || 0}
-              </span>
+          <div className="flex flex-col gap-3 p-5">
+            <div>
+              <h4 className="text-sm font-extrabold uppercase tracking-wide text-slate-800 [overflow-wrap:anywhere]">
+                {formData.title || 'Activity title'}
+              </h4>
+              {getOrganizerDisplayName() && (
+                <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-eco-700">
+                  <Building2 className="h-3 w-3" /> {getOrganizerDisplayName()}
+                </p>
+              )}
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2.5 text-xs text-slate-600">
-              <p className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-eco-600" /> <span className="truncate">{formData.location || 'Location'}</span></p>
-              <p className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 shrink-0 text-eco-600" /> {formData.date || 'Date'}</p>
-              <p className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-eco-600" /> <span className="truncate">{formData.meetingPlace || 'Meeting place'}</span></p>
-              <p className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 shrink-0 text-eco-600" /> {formData.time ? formatTimeRange(formData) : 'Time'}</p>
-            </div>
-
-            <p className="mt-4 max-w-full rounded-xl border border-slate-100 bg-slate-50/80 px-3.5 py-3 text-left text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">
+            <p className="line-clamp-2 text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">
               {formData.description || 'Activity description will appear here.'}
             </p>
 
-            <div className="mt-4 flex justify-end">
-              <span className="eco-btn eco-btn-primary eco-btn-sm pointer-events-none opacity-90">REGISTER</span>
+            <div className="space-y-1.5 text-xs text-slate-600">
+              <p className="flex items-center gap-2 font-semibold text-slate-700">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-eco-600" />
+                <span className="truncate">{formData.location || 'Location'}</span>
+              </p>
+              <p className="flex items-center gap-2">
+                <Users className="h-3.5 w-3.5 shrink-0 text-eco-600" />
+                <span className="truncate">Meeting: {formData.meetingPlace || 'Meeting place'}</span>
+              </p>
             </div>
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-slate-600">
+                <span>0/{formData.volunteerLimit || 0} volunteers joined</span>
+                <span className="text-eco-700">0%</span>
+              </div>
+              <div className="eco-progress"><span style={{ width: '0%' }} /></div>
+            </div>
+          </div>
+
+          <div className="pointer-events-none flex items-center gap-2 border-t border-eco-100 bg-eco-50/40 px-4 py-3">
+            <span className="eco-btn eco-btn-primary eco-btn-sm flex-1 opacity-90">Join activity</span>
+            <span className="rounded-lg px-2 py-1.5 text-[13px] font-extrabold text-eco-700">Details</span>
           </div>
         </div>
       </div>
@@ -1635,6 +1652,26 @@ function CreateActivityView({ draft: formData, setDraft: setFormData }) {
 /* ==========================================
    MANAGE ACTIVITIES VIEW
    ========================================== */
+// Date-range filters for the Manage Activities chips (week runs Monday to Sunday).
+const activityInThisWeek = (activity) => {
+  const d = new Date(activity.date);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+  return d >= start && d < end;
+};
+const activityInThisMonth = (activity) => {
+  const d = new Date(activity.date);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+};
+const matchesDateChip = (activity, key) => (
+  key === 'Ongoing' ? getActivityStatus(activity) === 'Ongoing'
+    : key === 'Week' ? activityInThisWeek(activity)
+      : key === 'Month' ? activityInThisMonth(activity)
+        : true
+);
+
 function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVolunteersOpened }) {
   useClockTick();
   const [selectedActivityForVolunteers, setSelectedActivityForVolunteers] = useState(null);
@@ -1682,17 +1719,10 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
   const matchesSearch = (act) => `${act.title} ${act.location}`.toLowerCase().includes(searchTerm.toLowerCase());
   const activeActivities = activities.filter((act) => displayStatus(act) !== 'Completed');
   const pastActivities = activities.filter((act) => displayStatus(act) === 'Completed');
+  const searchedActive = activeActivities.filter(matchesSearch);
   const filtered = listView === 'past'
     ? sortLatestFirst(pastActivities.filter(matchesSearch))
-    : sortActivitiesByStatus(activeActivities.filter((act) => (
-      (activeFilter === 'All' || activeFilter === 'Completed' || displayStatus(act) === activeFilter) && matchesSearch(act)
-    )));
-
-  const statusCounts = activities.reduce((counts, activity) => {
-    const status = displayStatus(activity);
-    counts[status] += 1;
-    return counts;
-  }, { Upcoming: 0, Ongoing: 0, Completed: 0 });
+    : sortActivitiesByStatus(searchedActive.filter((act) => matchesDateChip(act, activeFilter)));
 
   const loadParticipants = async (activity) => {
     try {
@@ -1909,45 +1939,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
   }
   if (error) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</div>;
 
-  const getActivityIcon = (category) => {
-    switch (category) {
-      case 'cleanup':
-        return <Droplets className="h-4 w-4" />;
-      case 'mangrove':
-        return <Sprout className="h-4 w-4" />;
-      default:
-        return <Trees className="h-4 w-4" />;
-    }
-  };
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case 'Ongoing':
-        return (
-          <span className="eco-badge eco-badge-amber">
-            <PlayCircle className="h-3 w-3 animate-pulse" />
-            Ongoing
-          </span>
-        );
-      case 'Upcoming':
-        return (
-          <span className="eco-badge eco-badge-blue">
-            <Clock className="h-3 w-3" />
-            Upcoming
-          </span>
-        );
-      case 'Completed':
-        return (
-          <span className="eco-badge eco-badge-gray">
-            <CheckCircle className="h-3 w-3" />
-            Completed
-          </span>
-        );
-      default:
-        return status;
-    }
-  };
-
   const actionBtn = 'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition';
 
   return (
@@ -1959,7 +1950,7 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
             type="text"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search activities..."
+            placeholder="Search by activity name or location"
             className="w-full bg-transparent text-sm font-medium outline-none placeholder:text-slate-400"
           />
         </div>
@@ -1991,20 +1982,22 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
       </div>
 
       {listView === 'active' ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[11px] font-extrabold uppercase tracking-widest text-eco-700/70">Date</span>
           {[
-            { label: 'All active', count: activeActivities.length, key: 'All', icon: Layers },
-            { label: 'Upcoming', count: statusCounts.Upcoming, key: 'Upcoming', icon: CalendarClock },
-            { label: 'Today', count: statusCounts.Ongoing, key: 'Ongoing', icon: Activity },
-          ].map(({ label, count, key, icon: FilterIcon }) => (
+            { label: 'Upcoming', key: 'All' },
+            { label: 'Ongoing', key: 'Ongoing' },
+            { label: 'This week', key: 'Week' },
+            { label: 'This month', key: 'Month' },
+          ].map(({ label, key }) => (
             <button
               key={key}
+              type="button"
               onClick={() => setFilter(key)}
               className={`eco-chip ${activeFilter === key ? 'eco-chip-active' : ''}`}
             >
-              <FilterIcon className="h-3.5 w-3.5" />
               <span>{label}</span>
-              <span className="eco-chip-count">{count}</span>
+              <span className="eco-chip-count">{searchedActive.filter((act) => matchesDateChip(act, key)).length}</span>
             </button>
           ))}
         </div>
@@ -2027,7 +2020,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
           const joinedCount = act.participants?.length || 0;
           const limit = Number(act.volunteerLimit) || 0;
           const fillPercent = limit > 0 ? Math.min(100, Math.round((joinedCount / limit) * 100)) : 0;
-          const category = act.title.toLowerCase().includes('clean') ? 'cleanup' : act.title.toLowerCase().includes('mangrove') ? 'mangrove' : 'tree-planting';
           return (
             <article
               key={act._id}
@@ -2044,7 +2036,6 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
                 )}
                 <div className={`absolute inset-0 bg-gradient-to-t ${act.coverImage ? 'from-eco-950/55' : 'from-eco-700/35'} via-transparent to-transparent`} />
                 <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
-                  {getStatusBadge(status)}
                   {act.isHidden && (
                     <span className="eco-badge eco-badge-red"><EyeOff className="h-3 w-3" /> Hidden by admin</span>
                   )}
@@ -2060,9 +2051,8 @@ function ManageActivitiesView({ activeFilter, setFilter, openVolunteersFor, onVo
               </div>
 
               <div className="flex flex-1 flex-col gap-3 p-5">
-                <h4 className="flex items-start gap-2.5 text-sm font-extrabold uppercase tracking-wide text-slate-800">
-                  <span className="eco-icon-tile-soft h-8 w-8 rounded-lg">{getActivityIcon(category)}</span>
-                  <span className="pt-1.5 [overflow-wrap:anywhere]">{act.title}</span>
+                <h4 className="text-sm font-extrabold uppercase tracking-wide text-slate-800 [overflow-wrap:anywhere]">
+                  {act.title}
                 </h4>
 
                 <p className="line-clamp-2 text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">{act.description || 'No description provided.'}</p>

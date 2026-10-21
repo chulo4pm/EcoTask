@@ -36,6 +36,25 @@ const activityMoment = (activity) => (
 )
 // Active list: today first, then the soonest. Past list: the most recent first.
 const sortSoonestFirst = (list) => [...list].sort((a, b) => activityMoment(a) - activityMoment(b))
+// Date-range filters for the Activities chips (week runs Monday to Sunday).
+const inThisWeek = (activity) => {
+  const d = new Date(activity.rawDate || activity.date)
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7)
+  return d >= start && d < end
+}
+const inThisMonth = (activity) => {
+  const d = new Date(activity.rawDate || activity.date)
+  const now = new Date()
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+}
+const matchesDateFilter = (activity, key) => (
+  key === 'Ongoing' ? activity.status === 'Ongoing'
+    : key === 'Week' ? inThisWeek(activity)
+      : key === 'Month' ? inThisMonth(activity)
+        : true
+)
 const sortLatestFirst = (list) => [...list].sort((a, b) => activityMoment(b) - activityMoment(a))
 
 const sortActivitiesByStatus = (activities) => {
@@ -81,6 +100,7 @@ import {
   Trash2,
   Menu,
   X,
+  Search,
   Users,
   ChevronRight,
   Sparkles,
@@ -1167,10 +1187,9 @@ function Activities({ goTo }) {
   const [pageNotice, setPageNotice] = useState('')
   const [registeredActivities, setRegisteredActivities] = useState([])
   const [activityFilter, setActivityFilter] = useState('All')
-  // Which activities to show: 'All', 'NotJoined' (still open to me) or 'Joined' (I'm registered).
-  const [joinFilter, setJoinFilter] = useState('All')
-  // Two separate lists: what you can still join ("active") and finished ones ("past").
-  const [view, setView] = useState('active')
+  // Three lists: "find" (open to join), "mine" (I'm registered) and "past" (finished).
+  const [view, setView] = useState('find')
+  const [searchText, setSearchText] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -1383,24 +1402,17 @@ function Activities({ goTo }) {
     }
   }
 
-  const activityCounts = activities.reduce((counts, activity) => {
-    const status = activity.status || 'Upcoming'
-    counts[status] += 1
-    return counts
-  }, { Upcoming: 0, Ongoing: 0, Completed: 0 })
   const activeActivities = sortSoonestFirst(activities.filter((activity) => activity.status !== 'Completed'))
   const pastActivities = sortLatestFirst(activities.filter((activity) => activity.status === 'Completed'))
-  const joinedActiveCount = activeActivities.filter((activity) => registeredActivities.includes(activity.id)).length
-  const notJoinedActiveCount = activeActivities.length - joinedActiveCount
+  const findActivities = activeActivities.filter((activity) => !registeredActivities.includes(activity.id))
+  const myActivities = activeActivities.filter((activity) => registeredActivities.includes(activity.id))
+  const searchTerm = searchText.trim().toLowerCase()
+  const matchesSearch = (activity) => !searchTerm || [activity.title, activity.location, activity.landmark]
+    .some((text) => String(text || '').toLowerCase().includes(searchTerm))
+  const tabActivities = (view === 'mine' ? myActivities : findActivities).filter(matchesSearch)
   const visibleActivities = view === 'past'
-    ? pastActivities
-    : activeActivities
-      .filter((activity) => activityFilter === 'All' || activity.status === activityFilter)
-      .filter((activity) => {
-        if (joinFilter === 'Joined') return registeredActivities.includes(activity.id)
-        if (joinFilter === 'NotJoined') return !registeredActivities.includes(activity.id)
-        return true
-      })
+    ? pastActivities.filter(matchesSearch)
+    : tabActivities.filter((activity) => matchesDateFilter(activity, activityFilter))
 
   if (loading) {
     return (
@@ -1430,11 +1442,12 @@ function Activities({ goTo }) {
 
   return (
     <div className="relative mx-auto max-w-[1450px] p-5 lg:p-8">
-      <PageHeader title="Activities" subtitle="Find an activity and register to volunteer.">
+      <PageHeader title="Activities" subtitle="Pick something that fits your day, then tap Join.">
         <div role="tablist" aria-label="Activity lists" className="inline-flex gap-1 rounded-2xl bg-eco-100/70 p-1">
           {[
-            { key: 'active', label: 'Active', count: activeActivities.length },
-            { key: 'past', label: 'Past events', count: pastActivities.length },
+            { key: 'find', label: 'Find activities', count: findActivities.length },
+            { key: 'mine', label: 'My activities', count: myActivities.length },
+            { key: 'past', label: 'Past', count: pastActivities.length },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -1457,32 +1470,43 @@ function Activities({ goTo }) {
         </div>
       </PageHeader>
 
-      {view === 'active' ? (
-        <div className="-mt-3 mb-5 flex flex-wrap items-center gap-2">
-          {[
-            { key: 'All', label: 'All active', count: activeActivities.length },
-            { key: 'NotJoined', label: 'Not joined', count: notJoinedActiveCount },
-            { key: 'Joined', label: 'Joined', count: joinedActiveCount },
-          ].map((filter) => (
+      <div className="-mt-3 mb-4 flex max-w-md items-center">
+        <div className="relative w-full">
+          <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-eco-600" />
+          <input
+            type="search"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Search by activity name or location"
+            aria-label="Search activities by name or location"
+            className="eco-input !pl-9 !pr-9"
+          />
+          {searchText && (
             <button
-              key={filter.key}
               type="button"
-              onClick={() => setJoinFilter(filter.key)}
-              className={`eco-chip ${joinFilter === filter.key ? 'eco-chip-active' : ''}`}
+              onClick={() => setSearchText('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-400 hover:bg-eco-50 hover:text-gray-600"
             >
-              {filter.label}
-              <span className="eco-chip-count">{filter.count}</span>
+              <X size={14} />
             </button>
-          ))}
-          <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-eco-200 sm:block" />
+          )}
+        </div>
+      </div>
+
+      {view !== 'past' ? (
+        <div className="-mt-1 mb-5 flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[11px] font-extrabold uppercase tracking-widest text-eco-700/70">Date</span>
           {[
-            { key: 'Upcoming', label: 'Upcoming', count: activityCounts.Upcoming },
-            { key: 'Ongoing', label: 'Today', count: activityCounts.Ongoing },
-          ].map((filter) => (
+            { key: 'All', label: 'Upcoming' },
+            { key: 'Ongoing', label: 'Ongoing' },
+            { key: 'Week', label: 'This week' },
+            { key: 'Month', label: 'This month' },
+          ].map((chip) => ({ ...chip, count: tabActivities.filter((activity) => matchesDateFilter(activity, chip.key)).length })).map((filter) => (
             <button
               key={filter.key}
               type="button"
-              onClick={() => setActivityFilter(activityFilter === filter.key ? 'All' : filter.key)}
+              onClick={() => setActivityFilter(filter.key)}
               className={`eco-chip ${activityFilter === filter.key ? 'eco-chip-active' : ''}`}
             >
               {filter.label}
@@ -1491,7 +1515,7 @@ function Activities({ goTo }) {
           ))}
         </div>
       ) : (
-        <p className="-mt-3 mb-5 flex items-center gap-1.5 text-xs font-medium text-gray-500">
+        <p className="mb-5 flex items-center gap-1.5 text-xs font-medium text-gray-500">
           <Clock size={13} /> Finished activities. You can't join these anymore. Most recent first.
         </p>
       )}
@@ -1499,13 +1523,21 @@ function Activities({ goTo }) {
       {visibleActivities.length === 0 && (
         <div className="eco-empty py-12">
           <Leaf size={26} className="text-eco-400" />
-          {view === 'past'
+          {searchTerm
+            ? `No activities match "${searchText.trim()}".`
+            : view === 'past'
             ? 'No past events yet.'
-            : joinFilter === 'NotJoined'
-              ? "You've joined every open activity here."
-              : joinFilter === 'Joined'
-                ? "You haven't joined any of these activities yet."
-                : 'No activities in this category yet.'}
+            : view === 'mine'
+              ? activityFilter === 'Ongoing'
+                ? "You don't have any ongoing activities joined."
+                                : activityFilter === 'All'
+                  ? "You haven't joined any activities yet. Check Find activities."
+                  : 'Nothing joined in this date range.'
+              : activityFilter === 'Ongoing'
+                ? 'No ongoing activities to join.'
+                : activityFilter === 'All'
+                  ? "You've joined every open activity. See My activities."
+                  : 'No activities to join in this date range.'}
         </div>
       )}
 
@@ -1529,107 +1561,122 @@ function Activities({ goTo }) {
                   className={`h-full w-full object-cover transition duration-500 group-hover:scale-105 ${past ? 'grayscale' : ''}`}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-eco-950/60 via-transparent to-transparent" />
-                <div className="absolute left-3 top-3 flex gap-1.5">
-                  <StatusBadge status={activity.status} />
-                </div>
                 {registered && past && (
                   <span className="eco-badge absolute right-3 top-3 border border-slate-500 bg-slate-700 text-white shadow-md">
                     <CheckCircle size={12} /> You joined
                   </span>
                 )}
-                <p className="absolute bottom-3 left-4 flex items-center gap-1.5 text-xs font-semibold text-white">
-                  <Calendar size={13} /> {activity.date}
+                <p className="absolute bottom-3 left-4 flex items-center gap-1.5 text-xs font-semibold text-white drop-shadow">
+                  <Calendar size={13} /> {new Date(activity.rawDate || activity.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  <span className="opacity-60">•</span>
+                  <Clock size={13} /> {activity.time}
                 </p>
               </div>
 
-              <div className="flex flex-1 flex-col p-4">
-                <h3 className="line-clamp-2 text-[15px] font-extrabold uppercase tracking-wide text-gray-800">
-                  {activity.title}
-                </h3>
-                {activity.organizerName && (
-                  <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-eco-700">
-                    <Building2 size={12} /> {activity.organizerName}
-                  </p>
-                )}
+              <div className="flex flex-1 flex-col gap-3 p-5">
+                <div>
+                  <h3 className="line-clamp-2 text-[15px] font-extrabold uppercase tracking-wide text-gray-800 [overflow-wrap:anywhere]">
+                    {activity.title}
+                  </h3>
+                  {activity.organizerName && (
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-eco-700">
+                      <Building2 size={12} /> {activity.organizerName}
+                    </p>
+                  )}
+                </div>
 
-                <div className="mt-3 space-y-1.5 text-xs text-gray-600">
-                  <p className="flex items-center gap-2">
+                <p className="line-clamp-2 text-xs leading-relaxed text-gray-600 [overflow-wrap:anywhere]">
+                  {activity.description || 'No description provided.'}
+                </p>
+
+                <div className="space-y-1.5 text-xs text-gray-600">
+                  <p className="flex items-center gap-2 font-semibold text-gray-700">
                     <MapPin size={13} className="shrink-0 text-eco-600" />
                     <span className="truncate">{activity.location}</span>
                   </p>
                   <p className="flex items-center gap-2">
-                    <Landmark size={13} className="shrink-0 text-eco-600" />
-                    <span className="truncate">{activity.landmark}</span>
-                  </p>
-                  <p className="flex items-center gap-2">
-                    <Clock size={13} className="shrink-0 text-eco-600" />
-                    <span className="truncate">{activity.time}</span>
+                    <Users size={13} className="shrink-0 text-eco-600" />
+                    <span className="truncate">Meeting: {activity.landmark}</span>
                   </p>
                 </div>
 
-                <div className="mt-4">
-                  <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold">
-                    <span className="flex items-center gap-1 text-gray-600">
-                      <Users size={12} className="text-eco-600" /> {count}/{limit || '—'} volunteers
-                    </span>
+                <div className="mt-auto">
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-gray-600">
+                    <span>{count}/{limit || '—'} volunteers joined</span>
                     {isClosedToday(activity) ? (
                       <span className="eco-badge border border-amber-200 bg-amber-50 text-amber-700">Registration closed</span>
                     ) : !past && isLeaveClosed(activity) ? (
                       <span className="eco-badge border border-amber-200 bg-amber-50 text-amber-700">Cancellation closed</span>
-                    ) : !past && isFull(activity) && <span className="eco-badge eco-badge-red">Full</span>}
+                    ) : !past && isFull(activity) ? (
+                      <span className="eco-badge eco-badge-red">Full</span>
+                    ) : (
+                      <span className="text-eco-700">{fillPercent}%</span>
+                    )}
                   </div>
                   <div className="eco-progress"><span style={{ width: `${fillPercent}%` }} /></div>
                 </div>
-
-                {past ? (
-                  <div className="mt-4 flex justify-end gap-2 border-t border-eco-100 pt-3">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedActivity(activity)}
-                      className="eco-btn eco-btn-secondary eco-btn-sm"
-                    >
-                      View details <ChevronRight size={14} />
-                    </button>
-                    {registered && goTo && (
-                      <button type="button" onClick={() => goTo('records')} className="eco-btn eco-btn-primary eco-btn-sm">
-                        See my record
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  // The main button shows where you stand: Join (open) or You're joined.
-                  <div className="mt-4 flex items-center gap-2 border-t border-eco-100 pt-3">
-                    {registered ? (
-                      <>
-                        <span className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-eco-50 px-3 py-2 text-xs font-extrabold text-eco-800">
-                          <CheckCircle size={14} /> You&apos;re joined
-                        </span>
-                        <button type="button" onClick={() => setSelectedActivity(activity)} className="eco-btn eco-btn-secondary eco-btn-sm">
-                          Details
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          disabled={isFull(activity) || isClosedToday(activity)}
-                          onClick={() => setRegistrationActivity(activity)}
-                          className={`eco-btn eco-btn-sm flex-1 ${isFull(activity) || isClosedToday(activity) ? 'eco-btn-muted' : 'eco-btn-primary'}`}
-                        >
-                          {isClosedToday(activity) ? 'Registration closed' : isFull(activity) ? 'Event full' : 'Join activity'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedActivity(activity)}
-                          className="rounded-lg px-2 py-1.5 text-[13px] font-extrabold text-eco-700 transition hover:bg-eco-50"
-                        >
-                          Details
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
               </div>
+
+              {past ? (
+                <div className="flex items-center justify-end gap-2 border-t border-eco-100 bg-eco-50/40 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedActivity(activity)}
+                    className="eco-btn eco-btn-secondary eco-btn-sm"
+                  >
+                    View details <ChevronRight size={14} />
+                  </button>
+                  {registered && goTo && (
+                    <button type="button" onClick={() => goTo('records')} className="eco-btn eco-btn-primary eco-btn-sm">
+                      See my record
+                    </button>
+                  )}
+                </div>
+              ) : (
+                // The main button shows where you stand: Join (open) or You're joined.
+                <div className="flex items-center gap-2 border-t border-eco-100 bg-eco-50/40 px-4 py-3">
+                  {registered ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={isLeaveClosed(activity)}
+                        onClick={() => setCancelActivity(activity)}
+                        title={isLeaveClosed(activity) ? 'Cancellation is closed. This activity has started.' : 'Click to cancel your registration'}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-eco-100 px-3 py-2 text-xs font-extrabold text-eco-800 transition ${
+                          isLeaveClosed(activity) ? 'cursor-default' : 'hover:bg-eco-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-eco-400'
+                        }`}
+                      >
+                        <CheckCircle size={14} /> You&apos;re joined
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedActivity(activity)}
+                        className="rounded-lg px-2 py-1.5 text-[13px] font-extrabold text-eco-700 transition hover:bg-eco-100"
+                      >
+                        Details
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={isFull(activity) || isClosedToday(activity)}
+                        onClick={() => setRegistrationActivity(activity)}
+                        className={`eco-btn eco-btn-sm flex-1 ${isFull(activity) || isClosedToday(activity) ? 'eco-btn-muted' : 'eco-btn-primary'}`}
+                      >
+                        {isClosedToday(activity) ? 'Registration closed' : isFull(activity) ? 'Event full' : 'Join activity'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedActivity(activity)}
+                        className="rounded-lg px-2 py-1.5 text-[13px] font-extrabold text-eco-700 transition hover:bg-eco-100"
+                      >
+                        Details
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </article>
           )
         })}
@@ -1820,7 +1867,7 @@ function Activities({ goTo }) {
                 Cancel
               </button>
               <button onClick={() => joinActivity()} className="eco-btn eco-btn-primary px-6">
-                Yes, Register
+                Register
               </button>
             </div>
           </div>
@@ -1852,7 +1899,7 @@ function Activities({ goTo }) {
                 Keep my spot
               </button>
               <button onClick={() => leaveActivity()} className="eco-btn eco-btn-danger">
-                Yes, unregister
+                Unregister
               </button>
             </div>
           </div>
