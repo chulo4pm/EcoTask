@@ -171,6 +171,14 @@ exports.setActivityVisibility = async (req, res) => {
 
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
+    // Unhiding puts the reports that led to the hide back to Open so the admin can review again.
+    if (!hidden) {
+      await Report.updateMany(
+        { activity: activity._id, status: 'actioned' },
+        { status: 'open', resolvedBy: null, resolvedAt: null, replyToReporter: '' }
+      );
+    }
+
     logActivityEvent({
       activity: activity._id,
       type: hidden ? 'hidden' : 'unhidden',
