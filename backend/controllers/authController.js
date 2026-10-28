@@ -1,0 +1,915 @@
+// Handles registration and login so users can create accounts and receive authenticated sessions.
+const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const {
+  validateRegistration,
+  validateEmail,
+  validateOrganizationName,
+  validateName,
+  validatePassword,
+  sendValidationErrors,
+} = require('../utils/validators');
+const { removeUploadedFiles, toStoredDocuments } = require('../middleware/documentUpload');
+const crypto = require('crypto');
+const { sendVerificationCodeEmail, sendPasswordResetCodeEmail, sendLoginCodeEmail } = require('../utils/sendEmail');
+const { notifyAdmins } = require('../utils/notify');
+
+/* ------------------------------------------
+   EMAIL VERIFICATION HELPERS
+   ------------------------------------------ */
+const CODE_TTL_MINUTES = 10;       // code expires after 10 minutes
+const MAX_CODE_ATTEMPTS = 5;       // wrong guesses allowed per code
+const RESEND_COOLDOWN_SECONDS = 60;
+
+const hashCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+const codesMatch = (plainCode, storedHash) => {
+  if (!storedHash) return false;
+  const a = Buffer.from(hashCode(plainCode), 'hex');
+  const b = Buffer.from(storedHash, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+// Seconds left before another code may be sent (0 = can send now).
+const resendWaitSeconds = (user) => {
+  if (!user.emailVerificationSentAt) return 0;
+  const elapsed = (Date.now() - new Date(user.emailVerificationSentAt).getTime()) / 1000;
+  return Math.max(0, Math.ceil(RESEND_COOLDOWN_SECONDS - elapsed));
+};
+
+// Seconds until a code expires (0 = already expired / none). The frontend shows this as a countdown.
+const expiresInSeconds = (date) =>
+  date ? Math.max(0, Math.ceil((new Date(date).getTime() - Date.now()) / 1000)) : 0;
+
+// Creates a new 6-digit code, saves its hash, and emails it.
+// Returns true if the email was sent, false if sending failed.
+const issueVerificationCode = async (user) => {
+  const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+  user.emailVerificationCode = hashCode(code);
+  user.emailVerificationExpires = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+  user.emailVerificationAttempts = 0;
+  user.emailVerificationSentAt = new Date();
+  await user.save();
+
+  try {
+    await sendVerificationCodeEmail({ to: user.email, name: user.name, code, minutes: CODE_TTL_MINUTES });
+    return true;
+  } catch (err) {
+    console.error('Failed to send verification email:', err.message);
+    return false;
+  }
+};
+
+// What the frontend needs to show the "Enter your code" screen.
+const verificationPayload = (user, emailSent) => ({
+  needsVerification: true,
+  email: user.email,
+  role: user.role,
+  emailSent,
+  resendAvailableIn: resendWaitSeconds(user),
+  expiresIn: expiresInSeconds(user.emailVerificationExpires),
+});
+
+// Generate JWT
+// No fallback secret: server.js refuses to start without a strong JWT_SECRET.
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  });
+};
+
+// Safe user shape returned to the frontend (never includes the password).
+const toAuthResponse = (user, withToken = true) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  createdAt: user.createdAt,
+  passwordChangedAt: user.passwordChangedAt || null,
+  ...(user.role === 'organizer' && {
+    organizationName: user.organizationName,
+    organizerStatus: user.organizerStatus,
+    rejectionReason: user.organizerStatus === 'rejected' ? user.rejectionReason : '',
+  }),
+  ...(withToken && { token: generateToken(user._id) }),
+});
+
+const cleanInput = (body) => ({
+  name: String(body.name || '').trim().replace(/\s+/g, ' '),
+  email: String(body.email || '').trim().toLowerCase(),
+  password: String(body.password || ''),
+  phone: String(body.phone || '').trim(),
+});
+
+// Register User (volunteer)
+exports.registerUser = async (req, res) => {
+  try {
+    const { name, email, password, phone } = cleanInput(req.body);
+
+    // Same rules as the Register form. Returns 400 with { message, errors: { field: msg } }.
+    if (sendValidationErrors(res, validateRegistration({ name, email, phone, password }))) return;
+
+    // Check if user exists
+    const userExists = await User.findOne({ email });
+    // An email that was never confirmed doesn't really "own" the address yet, so a
+    // volunteer who went back from the code screen can sign up again with new details.
+    const retryable = userExists && !userExists.isEmailVerified && userExists.role === 'volunteer' && !userExists.isSuspended;
+    if (userExists && !retryable) {
+      return res.status(409).json({
+        message: 'An account with this email already exists',
+        errors: { email: 'An account with this email already exists' },
+      });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    let user;
+    let codeStillFresh = false;
+    if (retryable) {
+      codeStillFresh = resendWaitSeconds(userExists) > 0; // just sent one: keep it, don't email again
+      userExists.name = name;
+      userExists.phone = phone;
+      userExists.password = hashedPassword;
+      user = await userExists.save();
+    } else {
+      // Create user
+      user = await User.create({
+        name,
+        email,
+        phone,
+        password: hashedPassword,
+        role: 'volunteer',
+        isEmailVerified: false,
+      });
+    }
+
+    // No token yet: the volunteer must enter the emailed code first.
+    const emailSent = codeStillFresh ? true : await issueVerificationCode(user);
+    res.status(201).json({
+      message: emailSent
+        ? `We sent a 6-digit code to ${user.email}. Enter it to activate your account.`
+        : "Your account was created, but we couldn't send the code. Tap \"Resend code\" to try again.",
+      ...verificationPayload(user, emailSent),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Register Organizer (multipart form with verification documents).
+// The account starts as "pending" until an admin approves it.
+exports.registerOrganizer = async (req, res) => {
+  const files = req.files || [];
+  try {
+    const { name, email, password, phone } = cleanInput(req.body);
+    const organizationName = String(req.body.organizationName || '').trim().replace(/\s+/g, ' ');
+
+    const errors = validateRegistration({ name, email, phone, password });
+    const orgError = validateOrganizationName(organizationName);
+    if (orgError) errors.organizationName = orgError;
+    if (files.length === 0) errors.documents = 'Upload at least one verification document.';
+
+    if (Object.keys(errors).length > 0) {
+      removeUploadedFiles(files);
+      return sendValidationErrors(res, errors);
+    }
+
+    const userExists = await User.findOne({ email });
+    // Same as volunteers: an unconfirmed application can be re-submitted.
+    const retryable = userExists && !userExists.isEmailVerified && userExists.role === 'organizer' && !userExists.isSuspended;
+    if (userExists && !retryable) {
+      removeUploadedFiles(files);
+      return res.status(409).json({
+        message: 'An account with this email already exists',
+        errors: { email: 'An account with this email already exists' },
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    let user;
+    let codeStillFresh = false;
+    if (retryable) {
+      codeStillFresh = resendWaitSeconds(userExists) > 0;
+      // Drop the documents from the abandoned attempt, keep the new ones.
+      removeUploadedFiles((userExists.organizerDocuments || []).map((d) => ({ filename: d.fileName })));
+      userExists.name = name;
+      userExists.phone = phone;
+      userExists.password = hashedPassword;
+      userExists.organizationName = organizationName;
+      userExists.organizerStatus = 'pending';
+      userExists.organizerDocuments = toStoredDocuments(files);
+      user = await userExists.save();
+    } else {
+      user = await User.create({
+        name,
+        email,
+        phone,
+        password: hashedPassword,
+        role: 'organizer',
+        organizationName,
+        organizerStatus: 'pending',
+        organizerDocuments: toStoredDocuments(files),
+        isEmailVerified: false,
+      });
+    }
+
+    // Organizer must confirm their email first, then wait for admin approval.
+    const emailSent = codeStillFresh ? true : await issueVerificationCode(user);
+    res.status(201).json({
+      message: emailSent
+        ? `We sent a 6-digit code to ${user.email}. Verify your email, then wait for admin approval.`
+        : "Your application was submitted, but we couldn't send the code. Tap \"Resend code\" to try again.",
+      ...verificationPayload(user, emailSent),
+      user: toAuthResponse(user, false),
+    });
+  } catch (error) {
+    removeUploadedFiles(files);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Rejected organizers upload new documents to apply again.
+exports.resubmitOrganizerDocuments = async (req, res) => {
+  const files = req.files || [];
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (user.organizerStatus !== 'rejected') {
+      removeUploadedFiles(files);
+      return res.status(400).json({ message: 'Only rejected applications can be resubmitted.' });
+    }
+    if (files.length === 0) {
+      return res.status(400).json({
+        message: 'Upload at least one verification document.',
+        errors: { documents: 'Upload at least one verification document.' },
+      });
+    }
+
+    if (req.body.organizationName !== undefined) {
+      const organizationName = String(req.body.organizationName).trim().replace(/\s+/g, ' ');
+      const orgError = validateOrganizationName(organizationName);
+      if (orgError) {
+        removeUploadedFiles(files);
+        return sendValidationErrors(res, { organizationName: orgError });
+      }
+      user.organizationName = organizationName;
+    }
+
+    // Keep old documents for the admin's history, add the new ones.
+    user.organizerDocuments.push(...toStoredDocuments(files));
+    user.organizerStatus = 'pending';
+    user.rejectionReason = '';
+    user.reviewedAt = null;
+    user.reviewedBy = null;
+    await user.save();
+
+    notifyAdmins({
+      type: 'organizer_application',
+      title: 'Organizer application resubmitted',
+      message: `${user.organizationName || user.name} sent new documents for review.`,
+    });
+
+    res.json({ message: 'Documents resubmitted. Please wait for admin approval.', user: toAuthResponse(user, false) });
+  } catch (error) {
+    removeUploadedFiles(files);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Return the logged-in user's current account info (used to refresh organizer status).
+exports.getMe = async (req, res) => {
+  res.json(toAuthResponse(req.user, false));
+};
+
+// Login User (all roles). The frontend login pages check the role.
+/* ------------------------------------------
+   LOGIN CODE (MFA) + "TRUST THIS DEVICE FOR 7 DAYS"
+   ------------------------------------------ */
+const TRUST_DAYS = 7;
+const MAX_TRUSTED_DEVICES = 10;          // per account; the oldest is dropped
+const LOGIN_CODE_SESSION_MINUTES = 30;   // "resend" only works this long after logging in
+
+const loginResendWait = (user) => {
+  if (!user.loginCodeSentAt) return 0;
+  const elapsed = (Date.now() - new Date(user.loginCodeSentAt).getTime()) / 1000;
+  return Math.max(0, Math.ceil(RESEND_COOLDOWN_SECONDS - elapsed));
+};
+
+const issueLoginCode = async (user) => {
+  const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+  user.loginCode = hashCode(code);
+  user.loginCodeExpires = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+  user.loginCodeAttempts = 0;
+  user.loginCodeSentAt = new Date();
+  await user.save();
+
+  try {
+    await sendLoginCodeEmail({ to: user.email, name: user.name, code, minutes: CODE_TTL_MINUTES });
+    return true;
+  } catch (err) {
+    console.error('Failed to send login code email:', err.message);
+    return false;
+  }
+};
+
+// What the frontend needs to show the "Enter your login code" screen.
+const loginCodePayload = (user, emailSent) => ({
+  needsLoginCode: true,
+  email: user.email,
+  role: user.role,
+  emailSent,
+  resendAvailableIn: loginResendWait(user),
+  expiresIn: expiresInSeconds(user.loginCodeExpires),
+  trustDays: TRUST_DAYS,
+});
+
+// `user` must have been loaded with +trustedDevices.
+const hasValidTrust = (user, trustToken) => {
+  if (!user || typeof trustToken !== 'string' || trustToken.length < 20) return false;
+  const hash = hashCode(trustToken);
+  const now = Date.now();
+  return (user.trustedDevices || []).some(
+    (device) => device.tokenHash === hash && new Date(device.expiresAt).getTime() > now,
+  );
+};
+
+// POST /api/auth/login-code/verify  body: { email, code, trustDevice }
+// Correct code -> same response as a normal login, plus trustToken when "trust" was ticked.
+exports.verifyLoginCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const code = String(req.body.code || '').replace(/\D/g, '');
+    const trustDevice = req.body.trustDevice === true;
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (code.length !== 6) errors.code = 'Enter the 6-digit code.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await User.findOne({ email }).select('+loginCode +trustedDevices');
+    const invalid = () => res.status(400).json({
+      message: 'Invalid or expired code.',
+      errors: { code: 'Invalid or expired code.' },
+    });
+
+    if (!user || !user.isEmailVerified) return invalid();
+
+    if (user.isSuspended) {
+      return res.status(403).json({
+        message: `This account has been suspended by the admin. Reason: ${user.suspendedReason || 'Not specified'}`,
+        suspended: true,
+        suspendedReason: user.suspendedReason,
+      });
+    }
+
+    if (!user.loginCode || !user.loginCodeExpires || user.loginCodeExpires < Date.now()) {
+      return res.status(400).json({
+        message: 'This code has expired. Tap "Resend code" to get a new one.',
+        errors: { code: 'Code expired.' },
+        expired: true,
+      });
+    }
+
+    if (user.loginCodeAttempts >= MAX_CODE_ATTEMPTS) {
+      return res.status(429).json({
+        message: 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Too many attempts.' },
+        expired: true,
+      });
+    }
+
+    if (!codesMatch(code, user.loginCode)) {
+      user.loginCodeAttempts += 1;
+      await user.save();
+      const left = MAX_CODE_ATTEMPTS - user.loginCodeAttempts;
+      return res.status(400).json({
+        message: left > 0
+          ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`
+          : 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Incorrect code.' },
+        attemptsLeft: left,
+      });
+    }
+
+    // Correct. The code works once.
+    user.loginCode = null;
+    user.loginCodeExpires = null;
+    user.loginCodeAttempts = 0;
+    user.loginCodeSentAt = null;
+
+    let trust = {};
+    if (trustDevice) {
+      const now = Date.now();
+      const trustToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(now + TRUST_DAYS * 24 * 60 * 60 * 1000);
+      const kept = user.trustedDevices.filter((device) => new Date(device.expiresAt).getTime() > now);
+      kept.push({
+        tokenHash: hashCode(trustToken),
+        createdAt: new Date(now),
+        expiresAt,
+        userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
+      });
+      user.trustedDevices = kept.slice(-MAX_TRUSTED_DEVICES);
+      trust = { trustToken, trustExpiresAt: expiresAt };
+    }
+
+    await user.save();
+    res.json({ ...toAuthResponse(user), ...trust });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/auth/login-code/resend  body: { email }
+// Only works right after a correct password (a code was already sent), 60s apart.
+exports.resendLoginCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const emailError = validateEmail(email);
+    if (emailError) return sendValidationErrors(res, { email: emailError });
+
+    const user = await User.findOne({ email });
+    const sessionStart = user?.loginCodeSentAt ? new Date(user.loginCodeSentAt).getTime() : 0;
+    const sessionOpen = sessionStart && Date.now() - sessionStart < LOGIN_CODE_SESSION_MINUTES * 60 * 1000;
+
+    if (!user || !user.isEmailVerified || user.isSuspended || !sessionOpen) {
+      return res.status(400).json({
+        message: 'Please go back and log in again to get a new code.',
+        sessionExpired: true,
+      });
+    }
+
+    const wait = loginResendWait(user);
+    if (wait > 0) {
+      return res.status(429).json({
+        message: `Please wait ${wait} seconds before asking for another code.`,
+        resendAvailableIn: wait,
+      });
+    }
+
+    const emailSent = await issueLoginCode(user);
+    res.json({
+      message: emailSent ? `A new code was sent to ${user.email}.` : "We couldn't send the email. Please try again.",
+      emailSent,
+      resendAvailableIn: loginResendWait(user),
+      expiresIn: expiresInSeconds(user.loginCodeExpires),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.loginUser = async (req, res) => {
+  try {
+    // Emails are saved lowercase at registration, so match them the same way here.
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (!password) errors.password = 'Password is required.';
+    if (sendValidationErrors(res, errors)) return;
+
+    // Check for user email
+    const user = await User.findOne({ email });
+
+    if (user && (await bcrypt.compare(password, user.password))) {
+      if (user.isSuspended) {
+        return res.status(403).json({
+          message: `This account has been suspended by the admin. Reason: ${user.suspendedReason || 'Not specified'}`,
+          suspended: true,
+          suspendedReason: user.suspendedReason,
+        });
+      }
+
+      // Email not confirmed yet: no token. If the old code expired, send a fresh one.
+      if (!user.isEmailVerified) {
+        let emailSent = false;
+        const codeExpired = !user.emailVerificationExpires || user.emailVerificationExpires < Date.now();
+        if (codeExpired && resendWaitSeconds(user) === 0) {
+          emailSent = await issueVerificationCode(user);
+        }
+        return res.status(403).json({
+          message: emailSent
+            ? `Please verify your email first. We sent a new code to ${user.email}.`
+            : 'Please verify your email first. Enter the code we sent to your inbox.',
+          ...verificationPayload(user, emailSent),
+        });
+      }
+
+      // MFA: a browser that was trusted in the last 7 days skips the code.
+      const withDevices = await User.findById(user._id).select('+trustedDevices');
+      if (hasValidTrust(withDevices, req.body.trustToken)) {
+        // Pending / rejected organizers still get a token so they can see their
+        // status and resubmit documents. organizerOnly blocks everything else.
+        return res.json(toAuthResponse(user));
+      }
+
+      // Otherwise email a 6-digit code. If one was just sent, keep it (no email spam).
+      let emailSent = true;
+      if (loginResendWait(user) === 0) emailSent = await issueLoginCode(user);
+      return res.json(loginCodePayload(user, emailSent));
+    } else {
+      res.status(401).json({ message: 'Invalid email or password' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ------------------------------------------
+   EMAIL VERIFICATION
+   ------------------------------------------ */
+
+// POST /api/auth/verify-email  body: { email, code }
+// On success the account is activated and the user is logged in (token returned).
+exports.verifyEmail = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const code = String(req.body.code || '').replace(/\D/g, '');
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (code.length !== 6) errors.code = 'Enter the 6-digit code.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await User.findOne({ email }).select('+emailVerificationCode');
+    // Same message for "no account" and "wrong code" so emails can't be probed.
+    const invalid = () => res.status(400).json({
+      message: 'Invalid or expired code.',
+      errors: { code: 'Invalid or expired code.' },
+    });
+
+    if (!user) return invalid();
+
+    if (user.isEmailVerified) {
+      return res.json({ message: 'Your email is already verified. You can sign in.', alreadyVerified: true });
+    }
+
+    if (user.isSuspended) {
+      return res.status(403).json({ message: 'This account has been suspended by the admin.', suspended: true });
+    }
+
+    if (!user.emailVerificationCode || !user.emailVerificationExpires || user.emailVerificationExpires < Date.now()) {
+      return res.status(400).json({
+        message: 'This code has expired. Tap "Resend code" to get a new one.',
+        errors: { code: 'Code expired.' },
+        expired: true,
+      });
+    }
+
+    if (user.emailVerificationAttempts >= MAX_CODE_ATTEMPTS) {
+      return res.status(429).json({
+        message: 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Too many attempts.' },
+        expired: true,
+      });
+    }
+
+    if (!codesMatch(code, user.emailVerificationCode)) {
+      user.emailVerificationAttempts += 1;
+      await user.save();
+      const left = MAX_CODE_ATTEMPTS - user.emailVerificationAttempts;
+      return res.status(400).json({
+        message: left > 0
+          ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`
+          : 'Too many wrong codes. Tap "Resend code" to get a new one.',
+        errors: { code: 'Incorrect code.' },
+        attemptsLeft: left,
+      });
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationCode = null;
+    user.emailVerificationExpires = null;
+    user.emailVerificationAttempts = 0;
+    await user.save();
+
+    // An organizer only reaches the admin's review queue once their email is confirmed.
+    if (user.role === 'organizer' && user.organizerStatus === 'pending') {
+      notifyAdmins({
+        type: 'organizer_application',
+        title: 'New organizer application',
+        message: `${user.organizationName || user.name} is waiting for review.`,
+      });
+    }
+
+    res.json({ message: 'Email verified!', ...toAuthResponse(user) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/auth/resend-verification  body: { email }
+// Always answers the same way so it can't be used to check which emails exist.
+exports.resendVerificationCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const emailError = validateEmail(email);
+    if (emailError) return sendValidationErrors(res, { email: emailError });
+
+    const generic = { message: 'If this account still needs verification, a new code has been sent.' };
+    const user = await User.findOne({ email });
+    if (!user || user.isEmailVerified || user.isSuspended) {
+      return res.json({ ...generic, resendAvailableIn: RESEND_COOLDOWN_SECONDS, expiresIn: CODE_TTL_MINUTES * 60 });
+    }
+
+    const wait = resendWaitSeconds(user);
+    if (wait > 0) {
+      return res.status(429).json({
+        message: `Please wait ${wait}s before requesting another code.`,
+        retryAfter: wait,
+        resendAvailableIn: wait,
+      });
+    }
+
+    const emailSent = await issueVerificationCode(user);
+    if (!emailSent) {
+      return res.status(502).json({
+        message: "We couldn't send the email right now. Please try again in a minute.",
+        resendAvailableIn: resendWaitSeconds(user),
+      });
+    }
+    res.json({ message: `A new code was sent to ${user.email}.`, resendAvailableIn: RESEND_COOLDOWN_SECONDS, expiresIn: CODE_TTL_MINUTES * 60 });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ------------------------------------------
+   FORGOT PASSWORD (email code)
+   Volunteers, organizers, and admins.
+   ------------------------------------------ */
+
+const RESET_ROLES = ['volunteer', 'organizer', 'admin'];
+
+const resetWaitSeconds = (user) => {
+  if (!user.passwordResetSentAt) return 0;
+  const elapsed = (Date.now() - new Date(user.passwordResetSentAt).getTime()) / 1000;
+  return Math.max(0, Math.ceil(RESEND_COOLDOWN_SECONDS - elapsed));
+};
+
+// POST /api/auth/forgot-password  body: { email }
+// Always gives the same answer so it can't be used to find out which emails have accounts.
+exports.forgotPassword = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const emailError = validateEmail(email);
+    if (emailError) return sendValidationErrors(res, { email: emailError });
+
+    const generic = {
+      message: `If an EcoTask account uses ${email}, we sent a 6-digit reset code to it.`,
+      email,
+      resendAvailableIn: RESEND_COOLDOWN_SECONDS,
+      expiresIn: CODE_TTL_MINUTES * 60,
+    };
+
+    const user = await User.findOne({ email });
+    if (!user || !RESET_ROLES.includes(user.role) || user.isSuspended) {
+      return res.json(generic);
+    }
+
+    const wait = resetWaitSeconds(user);
+    if (wait > 0) {
+      return res.status(429).json({
+        message: `Please wait ${wait}s before requesting another code.`,
+        retryAfter: wait,
+        resendAvailableIn: wait,
+        expiresIn: expiresInSeconds(user.passwordResetExpires),
+        email,
+      });
+    }
+
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    user.passwordResetCode = hashCode(code);
+    user.passwordResetExpires = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+    user.passwordResetAttempts = 0;
+    user.passwordResetSentAt = new Date();
+    await user.save();
+
+    try {
+      await sendPasswordResetCodeEmail({ to: user.email, name: user.name, code, minutes: CODE_TTL_MINUTES });
+    } catch (err) {
+      console.error('Failed to send password reset email:', err.message);
+      return res.status(502).json({ message: "We couldn't send the email right now. Please try again in a minute." });
+    }
+
+    res.json(generic);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Shared code check for the two reset steps. Returns null when the code is right,
+// otherwise the error response has already been sent.
+const checkResetCode = async (res, email, code) => {
+  const user = await User.findOne({ email }).select('+passwordResetCode');
+  const invalid = (message = 'Invalid or expired code.', extra = {}) => {
+    res.status(400).json({ message, errors: { code: message }, ...extra });
+    return null;
+  };
+
+  if (!user || !RESET_ROLES.includes(user.role) || user.isSuspended) return invalid();
+
+  if (!user.passwordResetCode || !user.passwordResetExpires || user.passwordResetExpires < Date.now()) {
+    return invalid('This code has expired. Tap "Resend code" to get a new one.', { expired: true });
+  }
+
+  if (user.passwordResetAttempts >= MAX_CODE_ATTEMPTS) {
+    res.status(429).json({
+      message: 'Too many wrong codes. Tap "Resend code" to get a new one.',
+      errors: { code: 'Too many attempts.' },
+      expired: true,
+    });
+    return null;
+  }
+
+  if (!codesMatch(code, user.passwordResetCode)) {
+    user.passwordResetAttempts += 1;
+    await user.save();
+    const left = MAX_CODE_ATTEMPTS - user.passwordResetAttempts;
+    return invalid(left > 0
+      ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.`
+      : 'Too many wrong codes. Tap "Resend code" to get a new one.');
+  }
+
+  return user;
+};
+
+// POST /api/auth/verify-reset-code  body: { email, code }
+// Step 2 of forgot password: confirm the code before showing the new-password form.
+// The code stays valid (until it expires) so step 3 can use it.
+exports.verifyResetCode = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const code = String(req.body.code || '').replace(/\D/g, '');
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (code.length !== 6) errors.code = 'Enter the 6-digit code.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await checkResetCode(res, email, code);
+    if (!user) return;
+
+    res.json({
+      message: 'Code confirmed. Choose your new password.',
+      expiresAt: user.passwordResetExpires,
+      expiresIn: expiresInSeconds(user.passwordResetExpires),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/auth/reset-password  body: { email, code, password, confirmPassword }
+exports.resetPassword = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const code = String(req.body.code || '').replace(/\D/g, '');
+    const password = String(req.body.password || '');
+    const confirmPassword = String(req.body.confirmPassword ?? password);
+
+    const errors = {};
+    const emailError = validateEmail(email);
+    if (emailError) errors.email = emailError;
+    if (code.length !== 6) errors.code = 'Enter the 6-digit code.';
+    const strengthError = validatePassword(password);
+    if (strengthError) errors.password = strengthError;
+    if (password !== confirmPassword) errors.confirmPassword = 'Passwords do not match.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await checkResetCode(res, email, code);
+    if (!user) return;
+
+    if (await bcrypt.compare(password, user.password)) {
+      return res.status(400).json({
+        message: 'New password must be different from your old one.',
+        errors: { password: 'Use a different password.' },
+      });
+    }
+
+    user.password = await bcrypt.hash(password, 10);
+    user.passwordChangedAt = new Date();
+    invalidateOldTokens(user);           // logs out every device that used the old password
+    user.isEmailVerified = true;         // they just proved they own this inbox
+    user.passwordResetCode = null;
+    user.passwordResetExpires = null;
+    user.passwordResetAttempts = 0;
+    await user.save();
+
+    res.json({ message: 'Password reset. You can now log in with your new password.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ------------------------------------------
+   ACCOUNT SETTINGS (any logged-in user; used by Admin → Account Settings)
+   ------------------------------------------ */
+
+// Everything issued before "now" becomes invalid. The 1s margin avoids
+// rejecting the fresh token we return in the same second.
+const invalidateOldTokens = (user) => {
+  user.tokensValidAfter = new Date(Date.now() - 1000);
+  user.trustedDevices = [];   // "trust this device for 7 days" is cancelled too
+};
+
+// PUT /api/auth/me  body: { name, currentPassword }
+// Used by Admin → Account Settings. Only the name can change here; login emails are fixed.
+// The current password is always required (the page asks for it before unlocking the form).
+exports.updateMyProfile = async (req, res) => {
+  try {
+    const name = String(req.body.name ?? '').trim().replace(/\s+/g, ' ');
+    const currentPassword = String(req.body.currentPassword || '');
+
+    if (!currentPassword) {
+      return res.status(400).json({
+        message: 'Enter your current password to save changes.',
+        errors: { currentPassword: 'Current password is required.' },
+      });
+    }
+
+    const nameError = validateName(name);
+    if (nameError) return sendValidationErrors(res, { name: nameError });
+
+    const user = await User.findById(req.user._id);
+
+    if (req.body.email !== undefined && String(req.body.email).trim().toLowerCase() !== user.email) {
+      return res.status(400).json({ message: "Email can't be changed.", errors: { email: "Email can't be changed." } });
+    }
+
+    if (!(await bcrypt.compare(currentPassword, user.password))) {
+      return res.status(400).json({
+        message: 'Current password is incorrect.',
+        errors: { currentPassword: 'Current password is incorrect.' },
+      });
+    }
+
+    if (name === user.name) {
+      return res.status(400).json({ message: 'No changes to save.' });
+    }
+
+    user.name = name;
+    await user.save();
+    res.json({ message: 'Profile saved.', user: toAuthResponse(user, false) });
+  } catch (error) {
+    res.status(500).json({ message: 'Could not save your profile. Please try again.' });
+  }
+};
+
+// PUT /api/auth/me/password  body: { currentPassword, newPassword, confirmPassword }
+// Logs out every other device; returns a fresh token for this one.
+exports.changeMyPassword = async (req, res) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+    const confirmPassword = String(req.body.confirmPassword || '');
+
+    const errors = {};
+    if (!currentPassword) errors.currentPassword = 'Current password is required.';
+    const strengthError = validatePassword(newPassword);
+    if (strengthError) errors.newPassword = strengthError;
+    if (newPassword !== confirmPassword) errors.confirmPassword = 'Passwords do not match.';
+    if (sendValidationErrors(res, errors)) return;
+
+    const user = await User.findById(req.user._id);
+    if (!(await bcrypt.compare(currentPassword, user.password))) {
+      return res.status(400).json({ message: 'Current password is incorrect.', errors: { currentPassword: 'Current password is incorrect.' } });
+    }
+    if (await bcrypt.compare(newPassword, user.password)) {
+      return res.status(400).json({ message: 'New password must be different from the current one.', errors: { newPassword: 'Use a different password.' } });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.passwordChangedAt = new Date();
+    invalidateOldTokens(user);
+    await user.save();
+
+    res.json({ message: 'Password changed. Other devices have been logged out.', ...toAuthResponse(user) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// POST /api/auth/me/logout-all - ends every session, then returns a fresh token for this device.
+exports.logoutAllDevices = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    invalidateOldTokens(user);
+    await user.save();
+    res.json({ message: 'Logged out of all other devices.', ...toAuthResponse(user) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

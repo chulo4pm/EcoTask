@@ -1,0 +1,485 @@
+// Controller for activities. Organizers manage their OWN activities;
+// volunteers browse and join visible ones; admins can see everything (oversight).
+const Activity = require('../models/Activity');
+const Participation = require('../models/Participation');
+const Report = require('../models/Report');
+const { notifyUsers, notifyVolunteers } = require('../utils/notify');
+const { logActivityEvent } = require('../utils/activityLog');
+const fs = require('fs/promises');
+const path = require('path');
+const { BUCKETS, deleteFile } = require('../utils/fileStore');
+const {
+  TIME_PATTERN, parseTimeLabel, getActivityPhase, hasActivityStarted,
+} = require('../utils/activityTime');
+
+const removeStoredImage = async (imagePath) => {
+  if (!imagePath || !imagePath.startsWith('/uploads/')) return;
+  // Images are stored in MongoDB now; older ones may still be on disk.
+  await deleteFile(BUCKETS.activityImages, path.basename(imagePath)).catch(() => {});
+  try {
+    await fs.unlink(path.join(__dirname, '..', imagePath));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+};
+
+// Removes a cover image that was uploaded with a request that then failed,
+// so it doesn't stay in the database with no activity using it.
+const discardUploadedImage = async (req) => {
+  if (!req.file?.filename) return;
+  await removeStoredImage(`/uploads/activities/${req.file.filename}`).catch(() => {});
+};
+
+const parseTasks = (tasks) => {
+  if (Array.isArray(tasks)) return tasks.map(String);
+  if (!tasks) return [];
+  try {
+    const parsed = JSON.parse(tasks);
+    return Array.isArray(parsed) ? parsed.map(String) : [String(parsed)];
+  } catch (_error) {
+    return [String(tasks)];
+  }
+};
+
+// Status follows the clock: upcoming (a later day), ongoing (the day of the event, until its
+// end time) and completed (after the end time). See utils/activityTime.js.
+const getDateStatus = getActivityPhase;
+
+const formatActivity = (activity) => {
+  const result = activity.toObject ? activity.toObject() : activity;
+  return {
+    ...result,
+    status: getDateStatus(result),
+    participantCount: result.participants?.length || 0,
+  };
+};
+
+// Only these fields can be set from a form. Prevents a request from setting
+// `organizer`, `participants`, or `isHidden` directly (mass-assignment).
+const EDITABLE_FIELDS = ['title', 'description', 'location', 'meetingPlace', 'date', 'time', 'endTime', 'volunteerLimit'];
+
+const pickActivityFields = (body) => {
+  const data = {};
+  EDITABLE_FIELDS.forEach((field) => {
+    if (body[field] !== undefined) data[field] = String(body[field]).trim();
+  });
+  if (body.tasks !== undefined) data.tasks = parseTasks(body.tasks);
+  if (data.volunteerLimit !== undefined) data.volunteerLimit = Number(data.volunteerLimit);
+  return data;
+};
+
+const LIMITS = {
+  titleMin: 5, titleMax: 100,
+  descriptionMin: 20, descriptionMax: 2000,
+  placeMin: 3, placeMax: 200,
+  volunteerMin: 1, volunteerMax: 1000,
+};
+
+const startOfDay = (value) => {
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+// Same rules as the Create Activity form on the frontend.
+// partial: true  -> only validate the fields that were sent (used by update);
+//                    every field that IS sent gets the full rules
+// checkFutureDate -> reject past dates (create, or when an update changes the date)
+const validateActivityFields = (data, { partial = false, checkFutureDate = !partial } = {}) => {
+  const errors = {};
+  const need = (field) => !partial || data[field] !== undefined;
+  const L = LIMITS;
+
+  if (need('title')) {
+    const t = data.title || '';
+    if (!t) errors.title = 'Title is required.';
+    else if (t.length < L.titleMin || t.length > L.titleMax) errors.title = `Title must be ${L.titleMin}-${L.titleMax} characters.`;
+    else if (!/[a-zA-Z]/.test(t)) errors.title = 'Title must contain letters, not only numbers or symbols.';
+  }
+
+  if (need('description')) {
+    const d = data.description || '';
+    if (!d) errors.description = 'Description is required.';
+    else if (d.length < L.descriptionMin || d.length > L.descriptionMax) errors.description = `Description must be ${L.descriptionMin}-${L.descriptionMax} characters.`;
+  }
+
+  ['location', 'meetingPlace'].forEach((field) => {
+    if (!need(field)) return;
+    const label = field === 'location' ? 'Location' : 'Meeting place';
+    const v = data[field] || '';
+    if (!v) errors[field] = `${label} is required.`;
+    else if (v.length < L.placeMin || v.length > L.placeMax) errors[field] = `${label} must be ${L.placeMin}-${L.placeMax} characters.`;
+  });
+
+  if (need('date')) {
+    const date = new Date(data.date);
+    if (!data.date || Number.isNaN(date.getTime())) {
+      errors.date = 'A valid date is required.';
+    } else if (checkFutureDate) {
+      const today = startOfDay(new Date());
+      const oneYear = new Date(today);
+      oneYear.setFullYear(oneYear.getFullYear() + 1);
+      if (startOfDay(date) < today) errors.date = 'Date cannot be in the past.';
+      else if (startOfDay(date) > oneYear) errors.date = 'Date must be within one year from today.';
+    }
+  }
+
+  if (need('time')) {
+    if (!data.time) errors.time = 'Please select a time.';
+    else if (!TIME_PATTERN.test(data.time)) errors.time = 'Time must look like "8:00 AM".';
+  }
+
+  if (need('endTime')) {
+    if (!data.endTime) errors.endTime = 'Please select an end time.';
+    else if (!TIME_PATTERN.test(data.endTime)) errors.endTime = 'End time must look like "5:00 PM".';
+    else if (!errors.time && data.time && parseTimeLabel(data.endTime) <= parseTimeLabel(data.time)) {
+      errors.endTime = 'End time must be later than the start time.';
+    }
+  }
+
+  if (need('volunteerLimit')) {
+    const n = data.volunteerLimit;
+    if (!Number.isInteger(n) || n < L.volunteerMin || n > L.volunteerMax) {
+      errors.volunteerLimit = `Volunteer limit must be a whole number from ${L.volunteerMin} to ${L.volunteerMax}.`;
+    }
+  }
+
+  return errors;
+};
+
+// Load an activity and make sure the logged-in organizer owns it.
+const findOwnedActivity = async (req, res) => {
+  const activity = await Activity.findById(req.params.id);
+  if (!activity) {
+    res.status(404).json({ message: 'Activity not found' });
+    return null;
+  }
+  if (req.user.role === 'organizer' && String(activity.organizer) !== String(req.user._id)) {
+    res.status(403).json({ message: 'You can only manage activities you created' });
+    return null;
+  }
+  return activity;
+};
+
+// Fetch activities based on who is asking:
+// - volunteer: all visible (not hidden) activities
+// - organizer: only their own activities (including hidden, so they can see why)
+// - admin: everything, with organizer info and open report counts
+exports.getActivities = async (req, res) => {
+  try {
+    const { role, _id } = req.user;
+    let query;
+
+    if (role === 'organizer') {
+      query = Activity.find({ organizer: _id }).populate('participants', 'name email phone');
+    } else if (role === 'admin') {
+      query = Activity.find().populate('participants', 'name email phone');
+    } else {
+      query = Activity.find({ isHidden: { $ne: true }, hiddenBySuspension: { $ne: true } });
+    }
+
+    const activities = await query
+      .populate('organizer', 'name organizationName')
+      .sort({ date: 1 });
+
+    let reportCounts = new Map();
+    if (role === 'admin' || role === 'organizer') {
+      const counts = await Report.aggregate([
+        { $match: { status: 'open', activity: { $in: activities.map((a) => a._id) } } },
+        { $group: { _id: '$activity', count: { $sum: 1 } } },
+      ]);
+      reportCounts = new Map(counts.map((item) => [String(item._id), item.count]));
+    }
+
+    // Attendance totals per activity (organizer/admin only), so the Participation
+    // Record page can show "2 of 3 marked" without loading every activity's records.
+    let attendanceCounts = new Map();
+    if (role === 'admin' || role === 'organizer') {
+      const counts = await Participation.aggregate([
+        { $match: { activity: { $in: activities.map((a) => a._id) } } },
+        {
+          $group: {
+            _id: '$activity',
+            total: { $sum: 1 },
+            present: { $sum: { $cond: [{ $eq: ['$attendance', 'present'] }, 1, 0] } },
+            absent: { $sum: { $cond: [{ $eq: ['$attendance', 'absent'] }, 1, 0] } },
+          },
+        },
+      ]);
+      attendanceCounts = new Map(counts.map((item) => [String(item._id), {
+        total: item.total,
+        present: item.present,
+        absent: item.absent,
+        unmarked: item.total - item.present - item.absent,
+      }]));
+    }
+    const emptyAttendance = { total: 0, present: 0, absent: 0, unmarked: 0 };
+
+    res.status(200).json(activities.map((activity) => ({
+      ...formatActivity(activity),
+      ...(role !== 'volunteer' && {
+        openReports: reportCounts.get(String(activity._id)) || 0,
+        attendance: attendanceCounts.get(String(activity._id)) || emptyAttendance,
+      }),
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Create a new activity. The logged-in organizer becomes its owner.
+exports.createActivity = async (req, res) => {
+  let imageInUse = false;
+  try {
+    const data = pickActivityFields(req.body);
+    const errors = validateActivityFields(data);
+    if (Object.keys(errors).length > 0) {
+      await discardUploadedImage(req);
+      return res.status(400).json({ message: Object.values(errors)[0], errors });
+    }
+
+    const activity = await Activity.create({
+      ...data,
+      organizer: req.user._id,
+      coverImage: req.file ? `/uploads/activities/${req.file.filename}` : null,
+    });
+    imageInUse = true;
+
+    notifyVolunteers({
+      type: 'activity_published',
+      title: 'New activity published',
+      message: activity.title,
+      activity: activity._id,
+    });
+
+    await activity.populate('organizer', 'name organizationName');
+    res.status(201).json(formatActivity(activity));
+  } catch (error) {
+    if (!imageInUse) await discardUploadedImage(req);
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Update an activity the organizer owns.
+exports.updateActivity = async (req, res) => {
+  let imageInUse = false;
+  try {
+    const activity = await findOwnedActivity(req, res);
+    if (!activity) {
+      await discardUploadedImage(req);
+      return;
+    }
+
+    const updates = pickActivityFields(req.body);
+    const dateChanged = updates.date !== undefined
+      && startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
+    const errors = validateActivityFields(updates, { partial: true, checkFutureDate: dateChanged });
+    if (Object.keys(errors).length > 0) {
+      await discardUploadedImage(req);
+      return res.status(400).json({ message: Object.values(errors)[0], errors });
+    }
+
+    // Changing only the start or only the end time must still leave the end after the start.
+    if (!errors.time && !errors.endTime && (updates.time !== undefined || updates.endTime !== undefined)) {
+      const start = parseTimeLabel(updates.time ?? activity.time);
+      const end = parseTimeLabel(updates.endTime ?? activity.endTime);
+      if (start !== null && end !== null && end <= start) {
+        await discardUploadedImage(req);
+        const message = 'End time must be later than the start time.';
+        return res.status(400).json({ message, errors: { endTime: message } });
+      }
+    }
+
+    if (updates.volunteerLimit !== undefined && updates.volunteerLimit < activity.participants.length) {
+      await discardUploadedImage(req);
+      return res.status(400).json({
+        message: `Volunteer limit can't be lower than the ${activity.participants.length} volunteers who already joined.`,
+      });
+    }
+
+    // Volunteers care about changes to what/when/where, not description edits.
+    const CHANGE_LABELS = { title: 'title', date: 'date', time: 'time', endTime: 'end time', location: 'location', meetingPlace: 'meeting place' };
+    const changed = Object.keys(CHANGE_LABELS).filter((field) => {
+      if (updates[field] === undefined) return false;
+      if (field === 'date') return startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
+      return String(updates[field]) !== String(activity[field] ?? '');
+    });
+    const previousTitle = activity.title;
+
+    // Everything that changed, for the admin's history (includes description and limit).
+    const LOG_LABELS = { ...CHANGE_LABELS, description: 'description', volunteerLimit: 'volunteer limit' };
+    const logChanges = Object.keys(LOG_LABELS).filter((field) => {
+      if (updates[field] === undefined) return false;
+      if (field === 'date') return startOfDay(updates.date).getTime() !== startOfDay(activity.date).getTime();
+      return String(updates[field]) !== String(activity[field] ?? '');
+    }).map((field) => {
+      if (field === 'time') return `time ${activity.time || '—'} → ${updates.time}`;
+      if (field === 'endTime') return `end time ${activity.endTime || '—'} → ${updates.endTime}`;
+      if (field === 'volunteerLimit') return `volunteer limit ${activity.volunteerLimit} → ${updates.volunteerLimit}`;
+      return LOG_LABELS[field];
+    });
+    if (req.file) logChanges.push('cover image');
+
+    const oldImage = activity.coverImage;
+    Object.assign(activity, updates);
+    if (req.file) activity.coverImage = `/uploads/activities/${req.file.filename}`;
+    await activity.save();
+    imageInUse = true;
+    if (req.file && oldImage !== activity.coverImage) await removeStoredImage(oldImage);
+
+    if (logChanges.length > 0) {
+      logActivityEvent({
+        activity: activity._id,
+        type: 'edited',
+        message: `Edited: ${logChanges.join(', ')}`,
+        actor: req.user._id,
+      });
+    }
+
+    if (changed.length > 0) {
+      notifyUsers(activity.participants, {
+        type: 'activity_updated',
+        title: 'Activity updated',
+        message: `${previousTitle} was updated (${changed.map((f) => CHANGE_LABELS[f]).join(', ')}). Check the latest details.`,
+        activity: activity._id,
+      });
+    }
+
+    await activity.populate('participants', 'name email phone');
+    await activity.populate('organizer', 'name organizationName');
+    res.json(formatActivity(activity));
+  } catch (error) {
+    if (!imageInUse) await discardUploadedImage(req);
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Delete an activity the organizer owns, plus its participation records and reports.
+exports.deleteActivity = async (req, res) => {
+  try {
+    const activity = await findOwnedActivity(req, res);
+    if (!activity) return;
+
+    const joinedVolunteers = [...activity.participants];
+    await Activity.deleteOne({ _id: activity._id });
+    notifyUsers(joinedVolunteers, {
+      type: 'activity_cancelled',
+      title: 'Activity cancelled',
+      message: `${activity.title} has been cancelled by the organizer.`,
+    });
+    await Participation.deleteMany({ activity: activity._id });
+    await Report.deleteMany({ activity: activity._id });
+    await removeStoredImage(activity.coverImage);
+    res.json({ message: 'Activity deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Allow a volunteer to join a visible, upcoming activity if space is available.
+exports.joinActivity = async (req, res) => {
+  try {
+    const activity = await Activity.findById(req.params.id);
+
+    if (!activity || activity.isHidden || activity.hiddenBySuspension) {
+      return res.status(404).json({ message: 'Activity not found' });
+    }
+
+    // Registration closes when the activity day starts.
+    const dateStatus = getDateStatus(activity);
+    if (dateStatus === 'completed') {
+      return res.status(400).json({ message: 'Completed activities cannot be joined' });
+    }
+    if (dateStatus === 'ongoing') {
+      return res.status(400).json({ message: 'Registration is closed. This activity is happening today.' });
+    }
+
+    const alreadyJoined = activity.participants.some(
+      (participantId) => participantId.toString() === req.user._id.toString()
+    );
+    if (alreadyJoined) {
+      return res.status(409).json({ message: 'You already joined this activity' });
+    }
+
+    if (activity.participants.length >= activity.volunteerLimit) {
+      return res.status(400).json({ message: 'This activity is full' });
+    }
+
+    activity.participants.push(req.user._id);
+    await activity.save();
+    await Participation.create({ activity: activity._id, user: req.user._id });
+
+    if (activity.organizer) {
+      notifyUsers([activity.organizer], {
+        type: 'volunteer_joined',
+        title: 'New volunteer joined',
+        message: `${req.user.name} joined ${activity.title} (${activity.participants.length}/${activity.volunteerLimit}).`,
+        activity: activity._id,
+      });
+    }
+
+    res.status(200).json(formatActivity(activity));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Remove the current user from an activity and delete their participation record.
+exports.leaveActivity = async (req, res) => {
+  try {
+    const activity = await Activity.findById(req.params.id);
+
+    if (!activity) {
+      return res.status(404).json({ message: 'Activity not found' });
+    }
+
+    const participantIndex = activity.participants.findIndex(
+      (participantId) => participantId.toString() === req.user._id.toString()
+    );
+    if (participantIndex === -1) {
+      return res.status(400).json({ message: 'You have not joined this activity' });
+    }
+
+    // Once the activity starts, volunteers are committed. This also covers finished activities.
+    if (hasActivityStarted(activity)) {
+      return res.status(400).json({
+        message: "You can't cancel your registration anymore. The activity has already started.",
+      });
+    }
+
+    activity.participants.splice(participantIndex, 1);
+    await activity.save();
+    await Participation.deleteOne({ activity: activity._id, user: req.user._id });
+    logActivityEvent({ activity: activity._id, type: 'left', message: `${req.user.name} left`, actor: req.user._id });
+
+    res.json({ message: 'You left the activity successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Return the volunteers who joined an activity (owner organizer or admin).
+exports.getActivityParticipants = async (req, res) => {
+  try {
+    const activity = await findOwnedActivity(req, res);
+    if (!activity) return;
+
+    await activity.populate('participants', 'name email phone');
+
+    const records = await Participation.find({ activity: activity._id }).select('user joinedAt');
+    const joinedAtByUser = new Map(records.map((record) => [record.user.toString(), record.joinedAt]));
+    res.json({
+      _id: activity._id,
+      title: activity.title,
+      volunteerLimit: activity.volunteerLimit,
+      participants: activity.participants.map((participant) => ({
+        ...participant.toObject(),
+        joinedAt: joinedAtByUser.get(participant._id.toString()) || null,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getDateStatus = getDateStatus;
